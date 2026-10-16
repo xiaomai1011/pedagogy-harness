@@ -1,34 +1,176 @@
-# 接口契约（Phase 0 产出 · 待冻结）
+# 接口契约（Phase 0 · 冻结版）
 
-> 本文件是判题岗与题库岗的**唯一依赖**，须最先冻结。冻结后任何改动须先与负责人确认。
-> 状态：**待填写**。
+> **状态**：✅ 已冻结（2026-10-16）
+> **负责人**：岗位 1（负责人 / 技术）
+> **变更规则**：本文件是判题岗（岗位 3）与题库岗（岗位 4）的唯一依赖。
+> 冻结后任何字段改动，**必须**先与岗位 1 确认，否则联调会崩。
+> **红线**：判题 I/O 必须含 `error_type` 与 `stderr` 两个字段——它们是错误分类器的输入。
 
-## 1. 判题模块 I/O（必须含 `error_type` 与 `stderr`）
+---
 
+## 1. 判题模块 I/O
+
+**分工**：判题岗（岗位 3）实现 `judge()`；它只负责"跑代码、给执行层结论"，**不做教学分类**。
+
+### 输入
+
+```json
+{
+  "question_id": "P001",
+  "language": "python",
+  "code": "print(1)"
+}
 ```
-待填写
-```
+
+### 输出 `JudgeResult`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `status` | enum | ✅ | `pass` / `fail` / `timeout` / `crash` / `error` |
+| `total_cases` | int | ✅ | 测试用例总数 |
+| `passed_cases` | int | ✅ | 通过的用例数 |
+| `failed_cases` | list | ✅ | 未过用例：[`{case_index, input, expected, actual, hidden}`]（hidden 用例不回显 input/expected） |
+| **`error_type`** | enum | ✅ | **执行层**错误类别：`none` / `syntax` / `runtime` / `timeout` / `wrong_output` |
+| **`stderr`** | str | ✅ | 子进程标准错误原文（无则空串） |
+| `stdout` | str | ✅ | 子进程标准输出（截断到 2000 字符） |
+| `exec_ms` | int | ✅ | 执行耗时（毫秒） |
+| `exit_code` | int \| null | ⬜ | 进程退出码；超时为 `null` |
+
+> **注意 `error_type` 的层级**：这里是**程序化判定的执行层类别**（5 个值），
+> **不是**教学五类（语法/类型/边界/逻辑/环境）。教学五类由错误分类器（`§5` 组件）从
+> `error_type` + `stderr` + 代码 推导得出。两层不要混。
+
+### 桩实现约定（Phase 1）
+
+岗位 3 未交付前，`judge()` 返回**固定**：`status=fail`、`passed_cases=0`、
+`error_type="runtime"`、`stderr` 填一句假的 `NameError`。用于跑通纵切。
+
+### 实现约定（岗位 3 照此实现，细则见 `docs/判题模块交接说明.md`）
+
+| 项 | 定死的规则 |
+|---|---|
+| 超时阈值 | **每用例 5 秒**（常量 `TIMEOUT_SECONDS = 5`） |
+| 输入喂法 | 用例 `input` 字符串（末尾补换行）写入子进程 **stdin** |
+| 解释器 / 工作目录 | `sys.executable`；在**系统临时目录**运行（不在仓库目录） |
+| 输出比对 | 先规范化（统一换行 → 去行尾空白 → 去末尾空行），再**精确比对**；不做浮点容差 |
+| stdout 上限 | 截断到 **2000 字符** |
+
+`error_type` 判定：
+
+| 情况 | `status` | `error_type` |
+|---|---|---|
+| 全用例通过 | `pass` | `none` |
+| `SyntaxError` / `IndentationError` | `fail` | `syntax` |
+| 运行期抛异常（`stderr` 含 `Traceback`） | `crash` | `runtime` |
+| 超时被杀 | `timeout` | `timeout` |
+| 正常结束但输出不符 | `fail` | `wrong_output` |
+| 判题器自身故障 | `error` | `runtime` |
+
+> `crash` = 学生代码崩了；`error` = 判题器自己出问题。禁止引入 Judge0 / isolate，禁止用 `eval`/`exec` 在主进程执行学生代码。
+
+---
 
 ## 2. 题库数据结构
 
-```
-待填写
+**分工**：题库岗（岗位 4-A）产出；存放于 `data/questions/*.json`（一题一文件）。
+
+```json
+{
+  "id": "P001",
+  "title": "两数之和",
+  "statement": "题干（Markdown）",
+  "examples": [
+    { "input": "1 2", "output": "3", "explain": "1+2=3" }
+  ],
+  "test_cases": [
+    { "input": "1 2", "expected": "3", "hidden": false },
+    { "input": "1000000 2000000", "expected": "3000000", "hidden": true }
+  ],
+  "reference_solution": "参考解源码（不下发给学生）",
+  "knowledge_points": ["变量与赋值", "标准输入输出"],
+  "difficulty": 1,
+  "error_samples": [
+    { "code": "print(1)", "error_type": "wrong_output", "knowledge_point": "标准输出格式" }
+  ]
+}
 ```
 
-## 3. 日志表 schema
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | ✅ | 唯一，`P001` 递增 |
+| `examples` | ✅ | 可见示例，至少 1 条 |
+| `test_cases` | ✅ | 判题用；`hidden=true` 的不回显给学生 |
+| `reference_solution` | ✅ | 参考解，**不得**下发给学生或喂给大模型 |
+| `knowledge_points` | ✅ | 该题考察的知识点，供错误分类器映射 |
+| `difficulty` | ✅ | `1` 基础 / `2` 中等 / `3` 较难（用于难度分层与前后测配对） |
+| `error_samples` | ⬜ | **（岗位 1 补充）** 用于测"错误分类准确率"，与 `§1` 的 `error_type` 同层级 |
 
-```
-待填写
-```
+---
 
-## 4. 错误记忆表 schema
+## 3. 日志表 schema（SQLite，实证数据核心）
 
-```
-待填写
-```
+**分工**：岗位 1 建表 + 岗位 3 按定义写入；**开发初期同步实现，不得事后补录**。
+
+表 `submission_log`（一次提交 = 一行）：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | INTEGER PK AUTOINCREMENT | 主键 |
+| `ts` | TEXT | 时间戳（ISO8601，含时区） |
+| `participant_id` | TEXT | 被试匿名编号（如 `S01`）；**非**真实姓名 |
+| `group_id` | TEXT | `exp` / `ctrl` / `abl` |
+| `question_id` | TEXT | 题目 id |
+| `submit_seq` | INTEGER | 该被试在该题的**第几次**提交（从 1 起） |
+| `status` | TEXT | 判题状态（同 `§1`） |
+| `error_type` | TEXT | 执行层类别（同 `§1`） |
+| `error_class` | TEXT | 教学五类（语法/类型/边界/逻辑/环境）；分类器关闭时为 `未分类` |
+| `error_kp` | TEXT | 映射到的知识点；无则空串 |
+| `hint_level` | INTEGER | 本次给出的提示等级 `0..4`（0 = 未给提示） |
+| `hint_requested` | INTEGER | `1` = 学生主动请求，`0` = 系统自动（连败升级） |
+| `pass_status` | INTEGER | `1` 通过 / `0` 未通过 |
+| `elapsed_ms` | INTEGER | 判题耗时 |
+
+> `submit_seq` 是"提交次数"的落库形式；`pass_status` 与 `elapsed_ms` 用于
+> 申报书指标"提示等级与通过率、耗时的关系可量化"。
+
+---
+
+## 4. 错误记忆表 schema（跨对话持久化）
+
+**分工**：岗位 1 实现。**要点：按 `participant_id` 持久化，跨会话累计**（创新点原文为"跨对话的学习者错误记忆"）。
+
+表 `error_memory`：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `participant_id` | TEXT | 被试编号 |
+| `error_class` | TEXT | 教学五类 |
+| `knowledge_point` | TEXT | 知识点 |
+| `count` | INTEGER | 累计出现次数 |
+| `last_seen_ts` | TEXT | 最近一次时间 |
+
+**主键**：`(participant_id, error_class, knowledge_point)`（命中即 `count + 1` 并更新 `last_seen_ts`）。
+`preventive_hint()` 读取该表，产出"你此前多次在 X 上出错"的预防性提示。
+
+---
 
 ## 5. 组件开关配置 schema
 
+**分工**：岗位 1 实现；**这是对照实验与消融实验的控制机制**。
+
+```json
+{ "group_id": "exp", "hint_ladder": true, "error_classifier": true, "error_memory": true }
 ```
-待填写
-```
+
+预设：
+
+| group_id | hint_ladder | error_classifier | error_memory | 含义 |
+|---|---|---|---|---|
+| `exp` | ✅ | ✅ | ✅ | 实验组（Harness 全开） |
+| `ctrl` | ❌ | ❌ | ❌ | 对照组（裸大模型） |
+| `abl_hint` | ✅ | ❌ | ❌ | 消融：只留提示阶梯 |
+| `abl_cls` | ❌ | ✅ | ❌ | 消融：只留错误分类器 |
+| `abl_mem` | ❌ | ❌ | ✅ | 消融：只留错误记忆 |
+
+> 开关**必须真正改变行为**，不能是装饰：关闭某组件时，其对应代码路径不得执行。
+> `ctrl` 组 = 不套 Harness，直接把问题交给大模型（用于对照）。
