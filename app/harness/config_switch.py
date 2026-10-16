@@ -6,12 +6,13 @@
 
 from dataclasses import dataclass
 
-# 三个内置组件名（必须与各组件类里声明的 name 完全一致）
+# 内置组件名（必须与各组件类里声明的 name 完全一致）
+PERSONA = "tutor_persona"
 ERROR_CLASSIFIER = "error_classifier"
 ERROR_MEMORY = "error_memory"
 HINT_LADDER = "hint_ladder"
 
-ALL_COMPONENTS = (ERROR_CLASSIFIER, ERROR_MEMORY, HINT_LADDER)
+ALL_COMPONENTS = (PERSONA, ERROR_CLASSIFIER, ERROR_MEMORY, HINT_LADDER)
 
 
 @dataclass(frozen=True)

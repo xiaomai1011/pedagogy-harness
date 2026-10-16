@@ -35,6 +35,7 @@ class SubmissionContext:
     # ---- 组件产出（后跑的组件可读前面组件的产出）----
     classification: Any = None   # 错误分类器的产出
     memory_hint: str = ""        # 错误记忆的产出
+    persona_system: str = ""     # 教学人格提供的系统提示词（人格组件关闭时为空）
     hint_level: int = 0          # 提示阶梯给出的等级（0 = 未给提示）
     message: str = ""            # 最终呈现给学生的反馈
     source: str = "harness"      # harness = 走了教学组件；raw_llm = 裸大模型

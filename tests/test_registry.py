@@ -33,7 +33,9 @@ def test_pipeline_source_does_not_know_this_component():
 
 
 def test_registry_order_is_by_order_field():
-    assert registry.names() == ["error_classifier", "error_memory", "hint_ladder"]
+    assert registry.names() == [
+        "tutor_persona", "error_classifier", "error_memory", "hint_ladder"
+    ]
 
 
 def test_new_component_works_without_touching_pipeline():
@@ -47,9 +49,9 @@ def test_new_component_works_without_touching_pipeline():
         )
         assert out["components"]["executed"] == ["spy_component"]
         assert out["message"] == "spy 组件写入的反馈"
-        # 三个内置组件本次都被跳过
+        # 内置组件本次都被跳过
         assert set(out["components"]["skipped"]) == {
-            "error_classifier", "error_memory", "hint_ladder"
+            "tutor_persona", "error_classifier", "error_memory", "hint_ladder"
         }
     finally:
         # 复原：清掉测试组件，重新注册内置组件，避免污染后续测试
