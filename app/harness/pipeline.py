@@ -1,16 +1,18 @@
 """Harness 主干：一次提交的完整处理流程。
 
-数据流（交接文档第一部分）：
-  提交代码 → 判题 → Harness 约束层（读开关）→ 三组件 → 返回学生 → 写日志
+数据流：提交代码 → 判题 → **按注册表遍历教学组件** → 返回学生 → 写日志
 
-契约 §5 的开关在此真正生效：关闭某组件时，其对应代码路径**不执行**。
+**主干不认识任何具体组件**：它只按 `registry.ordered()` 遍历，用配置决定每个
+组件"跑还是跳过"。所以新增一个教学组件，本文件一行都不用改。
 """
 
 from datetime import datetime
 
 from app import db
 from app import llm as llm_mod
-from app.harness import error_classifier, error_memory, hint_ladder
+from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
+from app.harness import registry
+from app.harness.base import SubmissionContext
 from app.harness.config_switch import HarnessConfig
 from app.judge import judge
 from app.questions import load_question
@@ -46,40 +48,42 @@ def handle_submission(*, participant_id: str, question_id: str, code: str,
     question = load_question(question_id)
     last_level, consecutive_fail = _recent_state(participant_id, question_id)
 
-    # 1) 判题：所有组都要跑（判题不是实验变量）
+    # 1) 判题：与实验分组无关，任何情况都要跑
     result = judge(question, code)
 
-    # 2) 错误分类器（受开关控制）
-    cls = None
-    if config.error_classifier:
-        cls = error_classifier.classify(result, code, question)
-        error_class, error_kp = cls.error_class, cls.knowledge_point
-    else:
-        error_class, error_kp = "未分类", ""
+    # 2) 按注册表遍历组件：开关真正决定"跑 / 跳过"
+    ctx = SubmissionContext(
+        participant_id=participant_id,
+        question_id=question_id,
+        question=question,
+        code=code,
+        ts=ts,
+        request_hint=request_hint,
+        judge_result=result,
+        last_level=last_level,
+        consecutive_fail=consecutive_fail,
+    )
+    for component in registry.ordered():
+        if config.is_enabled(component.name):
+            component.run(ctx)
+            ctx.executed.append(component.name)
+        else:
+            ctx.skipped.append(component.name)
 
-    # 3) 学习者错误记忆（受开关控制）
-    memory_hint = ""
-    if config.error_memory:
-        if result.status != "pass":
-            error_memory.remember(participant_id, cls, ts)
-        memory_hint = error_memory.preventive_hint(participant_id)
-
-    # 4) 反馈与提示生成
-    if config.hint_ladder:
-        # 实验组：走提示阶梯（分层引导，不给答案）
-        level = hint_ladder.next_level(last_level, requested=request_hint,
-                                       consecutive_fail=consecutive_fail)
-        message = hint_ladder.render(level, question, result, cls, memory_hint)
-        source = "harness"
-    else:
-        # 对照组：裸大模型，直接把上下文交给模型（无教学法约束）
-        level = 0
-        message = llm_mod.llm(
+    # 3) 兜底：没有任何教学组件产出反馈 → 裸大模型。
+    #    注意：`ctrl`（组件一个都不开）走到这里就是对照组；
+    #    若只开了分类器/记忆而没开提示阶梯，也会走到这里（没有呈现层）。
+    if not ctx.message:
+        ctx.message = llm_mod.llm(
             system="你是编程助手，请回答学生的问题。",
             user=f"题目：{question.get('statement','')}\n学生的代码：\n{code}\n"
                  f"判题结果：{result.status}；报错：{result.stderr}",
         )
-        source = "raw_llm"
+        ctx.source = "raw_llm"
+
+    # 4) 取分类结果（分类器被跳过时为「未分类」）
+    error_class = getattr(ctx.classification, "error_class", "未分类")
+    error_kp = getattr(ctx.classification, "knowledge_point", "")
 
     # 5) 日志埋点（不得事后补录）
     payload = {
@@ -92,7 +96,7 @@ def handle_submission(*, participant_id: str, question_id: str, code: str,
         "error_type": result.error_type,
         "error_class": error_class,
         "error_kp": error_kp,
-        "hint_level": level,
+        "hint_level": ctx.hint_level,
         "hint_requested": 1 if request_hint else 0,
         "pass_status": 1 if result.status == "pass" else 0,
         "elapsed_ms": result.exec_ms,
@@ -105,9 +109,11 @@ def handle_submission(*, participant_id: str, question_id: str, code: str,
         "stderr": result.stderr,
         "error_class": error_class,
         "knowledge_point": error_kp,
-        "hint_level": level,
-        "memory_hint": memory_hint,
-        "message": message,
-        "source": source,
+        "hint_level": ctx.hint_level,
+        "memory_hint": ctx.memory_hint,
+        "message": ctx.message,
+        "source": ctx.source,
+        # 组件执行轨迹：便于演示与排查"哪个组件被跳过了"
+        "components": {"executed": ctx.executed, "skipped": ctx.skipped},
         "log": payload,
     }

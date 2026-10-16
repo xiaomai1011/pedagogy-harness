@@ -4,13 +4,15 @@
 升级触发：学生**主动请求** 或 **连续失败 2 次**
 硬约束：**L4 只给代码片段，绝不给完整可运行答案**
 
-=== 给岗位 1 的任务（Phase 2, 10/21—10/27）===
+=== 给岗位 1 的任务（Phase 2）===
 - 实现等级推进逻辑（active / consecutive_fail / manual_upgrade）
 - render() 通过 app.llm.llm() 生成该等级提示
 - **必须配一层程序化校验**：若输出混入完整可运行答案，拦截并降级重写
 
 当前为桩：固定返回 L1 提示文本。
 """
+
+from app.harness.base import TeachingComponent
 
 MAX_LEVEL = 4
 
@@ -36,3 +38,22 @@ def render(level: int, question: dict, judge_result, classification, memory_hint
     """
     labels = {0: "（无提示）", 1: "L1 方向", 2: "L2 思路骨架", 3: "L3 伪代码", 4: "L4 代码片段"}
     return f"[桩·提示阶梯] 等级={level}（{labels.get(level, '')}）"
+
+
+class HintLadderComponent(TeachingComponent):
+    """把提示阶梯包成可插拔组件。**必须最后跑**（要用到前两个组件的产出）。"""
+
+    name = "hint_ladder"
+    order = 30
+
+    def run(self, ctx) -> None:
+        ctx.hint_level = next_level(
+            ctx.last_level,
+            requested=ctx.request_hint,
+            consecutive_fail=ctx.consecutive_fail,
+        )
+        ctx.message = render(
+            ctx.hint_level, ctx.question, ctx.judge_result,
+            ctx.classification, ctx.memory_hint,
+        )
+        ctx.source = "harness"

@@ -10,6 +10,8 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app import db
+from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
+from app.harness import registry
 from app.harness.config_switch import PRESETS
 from app.harness.pipeline import handle_submission
 from app.questions import list_questions, load_question
@@ -37,6 +39,12 @@ def index() -> str:
 def api_questions() -> list[dict]:
     return [{"id": q["id"], "title": q["title"], "difficulty": q.get("difficulty")}
             for q in list_questions()]
+
+
+@app.get("/api/components")
+def api_components() -> dict:
+    """当前已注册的教学组件。演示"可插拔"用：注册表里有什么，就返回什么。"""
+    return {"registered": registry.names()}
 
 
 @app.get("/api/questions/{question_id}")

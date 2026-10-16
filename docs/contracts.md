@@ -118,7 +118,7 @@
 | `id` | INTEGER PK AUTOINCREMENT | 主键 |
 | `ts` | TEXT | 时间戳（ISO8601，含时区） |
 | `participant_id` | TEXT | 被试匿名编号（如 `S01`）；**非**真实姓名 |
-| `group_id` | TEXT | `exp` / `ctrl` / `abl` |
+| `group_id` | TEXT | 预设名：`exp` / `ctrl` / `abl_hint` / `abl_cls` / `abl_mem` |
 | `question_id` | TEXT | 题目 id |
 | `submit_seq` | INTEGER | 该被试在该题的**第几次**提交（从 1 起） |
 | `status` | TEXT | 判题状态（同 `§1`） |
@@ -156,21 +156,39 @@
 
 ## 5. 组件开关配置 schema
 
-**分工**：岗位 1 实现；**这是对照实验与消融实验的控制机制**。
+**分工**：岗位 1 实现。开关按**组件名**启停（不是写死三个布尔字段），
+这样新增组件时本结构不用改。
 
 ```json
-{ "group_id": "exp", "hint_ladder": true, "error_classifier": true, "error_memory": true }
+{ "group_id": "exp", "enabled": ["error_classifier", "error_memory", "hint_ladder"] }
 ```
 
 预设：
 
-| group_id | hint_ladder | error_classifier | error_memory | 含义 |
-|---|---|---|---|---|
-| `exp` | ✅ | ✅ | ✅ | 实验组（Harness 全开） |
-| `ctrl` | ❌ | ❌ | ❌ | 对照组（裸大模型） |
-| `abl_hint` | ✅ | ❌ | ❌ | 消融：只留提示阶梯 |
-| `abl_cls` | ❌ | ✅ | ❌ | 消融：只留错误分类器 |
-| `abl_mem` | ❌ | ❌ | ✅ | 消融：只留错误记忆 |
+| group_id | enabled（组件名） | 含义 |
+|---|---|---|
+| `exp` | 三个组件全在 | Harness 全开 |
+| `ctrl` | `[]`（一个都不开） | 裸大模型 |
+| `abl_hint` | `["hint_ladder"]` | 消融：只留提示阶梯 |
+| `abl_cls` | `["error_classifier"]` | 消融：只留错误分类器 |
+| `abl_mem` | `["error_memory"]` | 消融：只留错误记忆 |
 
-> 开关**必须真正改变行为**，不能是装饰：关闭某组件时，其对应代码路径不得执行。
-> `ctrl` 组 = 不套 Harness，直接把问题交给大模型（用于对照）。
+执行顺序**不由配置决定**，由各组件自己声明的 `order` 决定（小的先跑）。
+当前：`error_classifier`(10) → `error_memory`(20) → `hint_ladder`(30)。
+
+### 5.1 组件基座（可插拔机制）
+
+主干 `pipeline.py` **不认识任何具体组件**，只按注册表遍历。新增组件只需三步：
+
+1. 建一个类，继承 `app.harness.base.TeachingComponent`，声明 `name` 与 `order`，实现 `run(ctx)`；
+2. 在 `app/harness/builtin.py` 里注册一行；
+3. 在预设的 `enabled` 里写上它的名字。
+
+**主干代码零改动**——这一条有测试保证：`tests/test_registry.py`
+（断言主干源码里搜不到那个新组件的名字，但注册后照样被调用）。
+
+> 开关**必须真正改变行为**，不能是装饰：关闭某组件时，其 `run()` 不得执行。
+> `ctrl`（一个组件都不开）走到主干末尾的兜底分支 = 裸大模型。
+> **注意**：正文反馈由 `hint_ladder` 组件负责呈现；若只开分类器/记忆而不开提示阶梯，
+> 因为没有呈现层，同样会落到兜底分支（退化为裸大模型）。这一取舍待 Phase 2 再定。
+> 当前 `/api/components` 接口可查看注册表里已注册的组件，用于现场演示"可插拔"。

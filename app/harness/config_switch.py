@@ -1,27 +1,36 @@
 """组件开关配置（契约 §5）。
 
-这是对照实验 / 消融实验的控制机制：开关必须真正改变行为，不能是装饰。
+开关按**组件名**启用/停用，而不是写死三个布尔字段——
+这样将来新增组件，只要往 `enabled` 里加个名字，本文件结构不用改。
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+
+# 三个内置组件名（必须与各组件类里声明的 name 完全一致）
+ERROR_CLASSIFIER = "error_classifier"
+ERROR_MEMORY = "error_memory"
+HINT_LADDER = "hint_ladder"
+
+ALL_COMPONENTS = (ERROR_CLASSIFIER, ERROR_MEMORY, HINT_LADDER)
 
 
 @dataclass(frozen=True)
 class HarnessConfig:
-    group_id: str            # exp / ctrl / abl_*
-    hint_ladder: bool        # 提示阶梯
-    error_classifier: bool   # 错误分类器
-    error_memory: bool       # 学习者错误记忆
+    group_id: str                              # exp / ctrl / abl_*
+    enabled: tuple[str, ...] = ()              # 启用的组件名
+
+    def is_enabled(self, name: str) -> bool:
+        return name in self.enabled
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {"group_id": self.group_id, "enabled": list(self.enabled)}
 
 
-# 预设分组（契约 §5 的表，一一对应，不要随意增删）
+# 预设分组（契约 §5 的表，一一对应）
 PRESETS = {
-    "exp":       HarnessConfig("exp", True, True, True),    # 实验组：Harness 全开
-    "ctrl":      HarnessConfig("ctrl", False, False, False),  # 对照组：裸大模型
-    "abl_hint":  HarnessConfig("abl", True, False, False),  # 消融：只留提示阶梯
-    "abl_cls":   HarnessConfig("abl", False, True, False),  # 消融：只留错误分类器
-    "abl_mem":   HarnessConfig("abl", False, False, True),  # 消融：只留错误记忆
+    "exp":      HarnessConfig("exp", ALL_COMPONENTS),         # 全开
+    "ctrl":     HarnessConfig("ctrl", ()),                    # 裸大模型：一个组件都不套
+    "abl_hint": HarnessConfig("abl_hint", (HINT_LADDER,)),    # 消融：只留提示阶梯
+    "abl_cls":  HarnessConfig("abl_cls", (ERROR_CLASSIFIER,)),# 消融：只留错误分类器
+    "abl_mem":  HarnessConfig("abl_mem", (ERROR_MEMORY,)),    # 消融：只留错误记忆
 }
