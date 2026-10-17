@@ -3,16 +3,19 @@
 要点（契约 §4）：按 participant_id **跨对话持久化**，聚合错误类型分布，
 在后续（含下次登录）给出**预防性提示**。
 
-=== 给岗位 1 的任务（Phase 3）===
-- 每次分类命中后调用 db.bump_error_memory 累计
-- preventive_hint() 聚合 db.get_error_memory，产出"你此前多次在 X 上出错"的提示
-
-当前为桩：返回空串。
+- 每次分类命中后调用 `db.bump_error_memory` 累计（命中即 count+1）
+- `preventive_hint()` 聚合 `db.get_error_memory`，产出"你此前多次在 X 上出错"
+- 读的是 `error_memory` 表，**跨会话累计**：换一道题、隔天再登录，记忆都还在
 """
 
 from app import db
 from app.harness.base import TeachingComponent
 from app.harness.error_classifier import Classification
+
+# 只报"反复出现"的错误：出现 1 次属偶发，称不上"倾向"，
+# 报了反而像在给学生贴标签。阈值与条数都写死，避免各次行为不一致。
+MIN_COUNT = 2
+MAX_ITEMS = 2
 
 
 def _safe_classification(classification) -> Classification:
@@ -29,19 +32,30 @@ def _safe_classification(classification) -> Classification:
 def remember(participant_id: str, classification, ts: str) -> None:
     """把一次错误计入记忆表。仅当开关 error_memory 开启时调用。
 
-    ===== 当前为桩实现（Phase 1）=====
-    TODO(岗位 1, Phase 3)：对接 db.bump_error_memory。
+    「未分类」不记账：否则记忆里会堆一串无意义的「未分类/」，
+    既污染统计，也让预防性提示变成一句废话。
     """
-    return None
+    if getattr(classification, "error_class", "未分类") == "未分类":
+        return
+    db.bump_error_memory(
+        participant_id,
+        classification.error_class,
+        getattr(classification, "knowledge_point", "") or "",
+        ts,
+    )
 
 
 def preventive_hint(participant_id: str) -> str:
-    """读取历史错误分布，产出预防性提示。
-
-    ===== 当前为桩实现（Phase 1）=====
-    TODO(岗位 1, Phase 3)：聚合 db.get_error_memory 生成提示。
-    """
-    return ""
+    """读取历史错误分布，产出预防性提示。历史不足（无 count>=2 的项）时返回空串。"""
+    rows = [r for r in db.get_error_memory(participant_id) if int(r.get("count", 0)) >= MIN_COUNT]
+    if not rows:
+        return ""
+    items = []
+    for row in rows[:MAX_ITEMS]:
+        knowledge_point = row.get("knowledge_point") or ""
+        where = f"（知识点：{knowledge_point}）" if knowledge_point else ""
+        items.append(f"{row['error_class']}类错误 {row['count']} 次{where}")
+    return "提醒一下：你此前反复出错的地方有 —— " + "、".join(items) + "。动笔前先留意。"
 
 
 class ErrorMemoryComponent(TeachingComponent):
