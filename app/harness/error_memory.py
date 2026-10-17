@@ -66,6 +66,9 @@ class ErrorMemoryComponent(TeachingComponent):
 
     def run(self, ctx) -> None:
         classification = _safe_classification(ctx.classification)
-        if ctx.judge_result.status != "pass":
+        # 只有**正式提交**入口才把这次判题记成一次错误（D 定案，2026-10-17）。
+        # 纯提示请求（`/api/hint`）复用同一份代码与同一个判题结果，
+        # 若也记账，"同类错误是否减少"的结论就会被点击次数污染（实测 1→4）。
+        if ctx.is_formal_submission and ctx.judge_result.status != "pass":
             remember(ctx.participant_id, classification, ctx.ts)
         ctx.memory_hint = preventive_hint(ctx.participant_id)

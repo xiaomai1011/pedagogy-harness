@@ -55,16 +55,27 @@ def _recent_state(participant_id: str, question_id: str) -> tuple[int, int]:
 
 
 def _run_pipeline(*, participant_id: str, question_id: str, question: dict, code: str,
-                  config: HarnessConfig, request_hint: bool, ts: str):
-    """判题 → 按注册表遍历组件 → 兜底。返回 `(ctx, judge_result)`，**不写日志**。"""
+                  config: HarnessConfig, request_hint: bool, ts: str,
+                  is_formal_submission: bool):
+    """判题 → 按注册表遍历组件 → 兜底。返回 `(ctx, judge_result)`，**不写日志**。
+
+    `is_formal_submission` 按**入口**区分（D 定案，2026-10-17）：
+
+    - `True`（`/api/submit`）：本次判题**计入**一次失败 —— 连败 +1、错误记忆 +1；
+    - `False`（`/api/hint`）：复用同一份代码与判题结果，**不得**再计一次失败、
+      也不得再写一次错误记忆，否则展示等级会越级、`count` 会被点击次数虚增。
+
+    **不得**用 `request_hint` 判断入口：`/api/submit` 也接受 `request_hint=true`。
+    """
     consecutive_fail, last_unlocked = _recent_state(participant_id, question_id)
 
     # 1) 判题：与运行配置无关，任何情况都要跑
     result = judge(question, code)
 
-    # 连败计数**含本次**：本次判题没通过就 +1。
-    # （"连续失败 2 次解锁一级"要算上学生眼前这一次失败，契约 §5.2）
-    if result.status != "pass":
+    # 连败计数**含本次**：**仅正式提交入口**把本次判题计入（"连续失败 2 次解锁一级"
+    # 要算上学生眼前这一次失败，契约 §5.2）。
+    # 纯提示请求复用同一次判题结果，**不得**再计一次（否则跨门槛处会越级）。
+    if is_formal_submission and result.status != "pass":
         consecutive_fail += 1
 
     # 2) 按注册表遍历组件：开关真正决定"跑 / 跳过"
@@ -78,6 +89,7 @@ def _run_pipeline(*, participant_id: str, question_id: str, question: dict, code
         judge_result=result,
         last_unlocked=last_unlocked,
         consecutive_fail=consecutive_fail,
+        is_formal_submission=is_formal_submission,
     )
     for component in registry.ordered():
         if config.is_enabled(component.name):
@@ -128,6 +140,7 @@ def handle_submission(*, participant_id: str, question_id: str, code: str,
     ctx, result = _run_pipeline(
         participant_id=participant_id, question_id=question_id, question=question,
         code=code, config=config, request_hint=request_hint, ts=ts,
+        is_formal_submission=True,
     )
 
     # 4) 日志埋点（不得事后补录）。
@@ -160,11 +173,15 @@ def handle_hint_request(*, participant_id: str, question_id: str, code: str,
 
     **但不写 `submission_log`**（返回里 `log` 恒为 `None`），
     以免把"提交次数 / 首次通过率"这类申报书指标虚增。
+
+    同时按入口置 `is_formal_submission=False`：本次判题**不**计入连败、
+    **不**写错误记忆（否则提示等级会越级、`count` 会被点击次数虚增）。
     """
     ts = _now()
     question = load_question(question_id)
     ctx, result = _run_pipeline(
         participant_id=participant_id, question_id=question_id, question=question,
         code=code, config=config, request_hint=True, ts=ts,
+        is_formal_submission=False,
     )
     return _response(ctx, result, log_payload=None)
