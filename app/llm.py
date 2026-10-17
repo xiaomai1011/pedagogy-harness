@@ -22,7 +22,10 @@ REQUIRED = ("PH_LLM_BASE_URL", "PH_LLM_API_KEY", "PH_LLM_MODEL")
 
 # 实验可比性考虑：温度调低，减少同一输入的随机波动
 DEFAULT_TEMPERATURE = 0.2
-DEFAULT_MAX_TOKENS = 800
+# 3000 而非 800：当前中转站的模型是**推理型**，先出 reasoning_content 再出正文，
+# 上限太低会把 token 耗在思考上、正文被截成空串（实测 step-3.7-flash 在 800 下
+# JSON 可解析率仅 33%、content 为空；提到 3000 后为 100%）。见 tools/model_probe.py。
+DEFAULT_MAX_TOKENS = 3000
 
 
 def is_configured() -> bool:
