@@ -62,8 +62,9 @@ def _run_pipeline(*, participant_id: str, question_id: str, question: dict, code
     `is_formal_submission` 按**入口**区分（D 定案，2026-10-17）：
 
     - `True`（`/api/submit`）：本次判题**计入**一次失败 —— 连败 +1、错误记忆 +1；
-    - `False`（`/api/hint`）：复用同一份代码与判题结果，**不得**再计一次失败、
-      也不得再写一次错误记忆，否则展示等级会越级、`count` 会被点击次数虚增。
+    - `False`（`/api/hint`）：会对当前代码**重新判题**，但该次执行**不计入**正式提交连败、
+      **也不更新**错误记忆，否则展示等级会越级、`count` 会被点击次数虚增。
+      —— 本函数**不做判题缓存**，两个入口各判各的（Q1 允许提示入口判题）。
 
     **不得**用 `request_hint` 判断入口：`/api/submit` 也接受 `request_hint=true`。
     """
@@ -74,7 +75,8 @@ def _run_pipeline(*, participant_id: str, question_id: str, question: dict, code
 
     # 连败计数**含本次**：**仅正式提交入口**把本次判题计入（"连续失败 2 次解锁一级"
     # 要算上学生眼前这一次失败，契约 §5.2）。
-    # 纯提示请求复用同一次判题结果，**不得**再计一次（否则跨门槛处会越级）。
+    # 纯提示入口会对当前代码**重新判题**（Q1 允许），但那次执行**不**计连败
+    # （否则跨门槛处会越级）。此处**没有**判题缓存，"复用判题结果"的说法不成立。
     if is_formal_submission and result.status != "pass":
         consecutive_fail += 1
 
