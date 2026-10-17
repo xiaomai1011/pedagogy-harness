@@ -1,0 +1,35 @@
+{
+  "id": "DEV_P5705",
+  "title": "数字反转（开发样例 · 源自洛谷 P5705）",
+  "statement": "给定一个不小于 100、小于 1000 的浮点数，它恰好保留一位小数。请把这个数的数字顺序完全颠倒后输出。\n\n例如输入 123.4，应输出 4.321。",
+  "examples": [
+    { "input": "123.4", "output": "4.321", "explain": "把 123.4 的数字从后往前排，得到 4.321" }
+  ],
+  "test_cases": [
+    { "input": "123.4", "expected": "4.321", "hidden": false },
+    { "input": "256.7", "expected": "7.652", "hidden": true },
+    { "input": "100.1", "expected": "1.001", "hidden": true },
+    { "input": "999.9", "expected": "9.999", "hidden": true }
+  ],
+  "reference_solution": "print(input().strip()[::-1])\n",
+  "knowledge_points": ["标准输入输出", "字符串处理", "反转逻辑", "输入取值范围"],
+  "difficulty": 1,
+  "phase": "practice",
+  "error_samples": [
+    {
+      "code": "print(float(input()))",
+      "error_type": "wrong_output",
+      "knowledge_point": "反转逻辑"
+    },
+    {
+      "code": "print(int(input()))",
+      "error_type": "runtime",
+      "knowledge_point": "输入取值范围"
+    },
+    {
+      "code": "n = input().replace('.', '')\nprint(int(n[::-1]))",
+      "error_type": "wrong_output",
+      "knowledge_point": "字符串处理"
+    }
+  ]
+}
