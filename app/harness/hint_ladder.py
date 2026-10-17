@@ -3,13 +3,15 @@
 四级：L1 方向 → L2 思路骨架 → L3 伪代码 → L4 代码片段
 （L4 只给局部代码片段，**绝不给完整可运行答案**）
 
-**口径②（2026-10-17 定案）：「解锁」与「展示」是两个独立状态。**
-- `unlocked_level`（已解锁上限）：**允许**展示到哪一级。**连败只解锁**——
+**口径②-A（2026-10-17 定案）：「解锁」与「展示」是两个独立状态，且"请求"不升级。**
+- `unlocked_level`（已解锁上限）：**允许**展示到哪一级。**只有连败能解锁**——
   连续失败累计到 2 的倍数就解锁一级（2 次 → L1，4 次 → L2，6 次 → L3，8 次及以上 → L4）。
 - `hint_level`（本次展示）：**这次实际给了哪一级**（0 = 没展示）。**只有学生主动请求才展示**，
-  请求时至少推进一级，且不得越过已解锁上限；上限 L4。
+  展示等级 = 已解锁等级；尚未解锁时给 L1 打底。**请求本身不升级**——
+  反复点"请求提示"始终停在同一级，想拿到更具体的提示**只能靠继续失败来解锁**。
 
-被否决的口径：①"每次提交自动升一级"；②"连败 2 次即自动展示"（会让学生**未求助就被动拿到提示**）。
+被否决的口径：①"每次提交自动升一级"；②"连败 2 次即自动展示"（学生未求助就被动拿到提示）；
+③"请求即升一级"（会让提示等级由**点击次数**驱动、与"卡住程度"脱钩，且连点 4 次即可拿到 L4）。
 
 **等级 0**：初次进入题目只给题目与判题反馈，不给任何教学提示。
 
@@ -48,17 +50,20 @@ def next_unlock(*, prev_unlocked: int, consecutive_fail: int) -> int:
     return max(min(prev_unlocked, MAX_LEVEL), by_fail)
 
 
-def next_state(*, prev_shown: int, prev_unlocked: int, consecutive_fail: int,
+def next_state(*, prev_unlocked: int, consecutive_fail: int,
                requested: bool) -> tuple[int, int]:
-    """算出本次的 (展示等级, 已解锁上限)。口径②的核心状态机。
+    """算出本次的 (展示等级, 已解锁上限)。口径②-A 的核心状态机。
 
     - **未请求** → 展示等级恒为 `0`（哪怕已解锁到 L4），解锁上限只按连败推进；
-    - **请求** → 展示并推进到下一级，且不得越过已解锁上限（最少给到 L1，上限 L4）。
+    - **请求** → **只展示、不再升级**：展示等级 = 已解锁等级；
+      还没攒够连败（解锁为 0）时给 L1 打底，保证学生点了就有回应。
+
+    这里**不看"上次展示等级"**——这正是"反复请求不会把等级推高"的保证。
     """
     unlocked = next_unlock(prev_unlocked=prev_unlocked, consecutive_fail=consecutive_fail)
     if not requested:
         return 0, unlocked
-    unlocked = min(max(unlocked, prev_shown + 1), MAX_LEVEL)
+    unlocked = max(unlocked, 1)      # 首次求助打底 L1
     return unlocked, unlocked
 
 
@@ -156,10 +161,9 @@ class HintLadderComponent(TeachingComponent):
     order = 30
 
     def run(self, ctx) -> None:
-        # 口径②：先按连败算"解锁到哪一级"，再看"本次展示不展示"
+        # 口径②-A：先按连败算"解锁到哪一级"，再看"本次展示不展示"
         # 注意顺序：next_state 返回 (展示等级, 已解锁上限)
         ctx.hint_level, ctx.unlocked_level = next_state(
-            prev_shown=ctx.last_level,
             prev_unlocked=ctx.last_unlocked,
             consecutive_fail=ctx.consecutive_fail,
             requested=ctx.request_hint,

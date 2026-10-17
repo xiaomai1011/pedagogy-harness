@@ -24,7 +24,6 @@ def _ctx(**kw):
         code="print(1)",
         request_hint=False,
         judge_result=_Judge(status=status),
-        last_level=0,
         last_unlocked=0,
         consecutive_fail=0,
         classification=None,
@@ -39,25 +38,43 @@ def _ctx(**kw):
 
 def test_not_requested_never_shows_even_when_unlocked():
     """口径②：学生没主动请求，就一个字提示都不展示。"""
-    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=0, requested=False) == (0, 0)
-    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=1, requested=False) == (0, 0)
-    assert hl.next_state(prev_shown=2, prev_unlocked=2, consecutive_fail=4, requested=False) == (0, 2)
+    assert hl.next_state(prev_unlocked=0, consecutive_fail=0, requested=False) == (0, 0)
+    assert hl.next_state(prev_unlocked=0, consecutive_fail=1, requested=False) == (0, 0)
+    assert hl.next_state(prev_unlocked=2, consecutive_fail=4, requested=False) == (0, 2)
 
 
 def test_two_consecutive_failures_only_unlock():
     """连败 2 次**只解锁**：解锁 L1，但本次不展示。"""
-    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=2, requested=False) == (0, 1)
-    assert hl.next_state(prev_shown=0, prev_unlocked=1, consecutive_fail=4, requested=False) == (0, 2)
+    assert hl.next_state(prev_unlocked=0, consecutive_fail=2, requested=False) == (0, 1)
+    assert hl.next_state(prev_unlocked=1, consecutive_fail=4, requested=False) == (0, 2)
 
 
-def test_request_shows_and_advances_one_level():
-    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=0, requested=True) == (1, 1)
-    assert hl.next_state(prev_shown=1, prev_unlocked=1, consecutive_fail=0, requested=True) == (2, 2)
+def test_request_shows_unlocked_level_without_advancing():
+    """口径②-A：请求**只展示**已解锁的那一级，不再"至少推进一级"。"""
+    # 还没攒够连败（解锁为 0）→ 给 L1 打底，保证学生点了就有回应
+    assert hl.next_state(prev_unlocked=0, consecutive_fail=0, requested=True) == (1, 1)
+    # 连败 2 次解锁 L1 → 展示 L1
+    assert hl.next_state(prev_unlocked=1, consecutive_fail=2, requested=True) == (1, 1)
+    # 连败 4 次解锁 L2 → 展示 L2
+    assert hl.next_state(prev_unlocked=2, consecutive_fail=4, requested=True) == (2, 2)
+
+
+def test_repeated_requests_never_raise_the_level():
+    """回归：反复点"请求提示"必须停在已解锁的那一级。
+
+    （改口径前这里是 1→2→3→4：点击次数本身就能把等级推满 L4。）
+    """
+    unlocked = 0
+    shown_levels = []
+    for _ in range(4):
+        shown, unlocked = hl.next_state(prev_unlocked=unlocked, consecutive_fail=0, requested=True)
+        shown_levels.append(shown)
+    assert shown_levels == [1, 1, 1, 1]
 
 
 def test_unlock_caps_at_four():
-    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=20, requested=False) == (0, 4)
-    assert hl.next_state(prev_shown=0, prev_unlocked=4, consecutive_fail=0, requested=True) == (4, 4)
+    assert hl.next_state(prev_unlocked=0, consecutive_fail=20, requested=False) == (0, 4)
+    assert hl.next_state(prev_unlocked=4, consecutive_fail=8, requested=True) == (4, 4)
 
 
 def test_level0_gives_no_teaching_hint():

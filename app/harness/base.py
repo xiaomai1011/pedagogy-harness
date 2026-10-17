@@ -29,9 +29,8 @@ class SubmissionContext:
     ts: str
     request_hint: bool
     judge_result: Any            # app.judge.JudgeResult
-    last_level: int              # 该被试在该题上次**展示**的提示等级
     last_unlocked: int           # 该被试在该题**已解锁**的提示等级上限
-    consecutive_fail: int        # 该被试在该题的连续失败次数
+    consecutive_fail: int        # 该被试在该题的连续失败次数（**含本次**）
 
     # ---- 组件产出（后跑的组件可读前面组件的产出）----
     classification: Any = None   # 错误分类器的产出

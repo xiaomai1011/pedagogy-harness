@@ -31,17 +31,19 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _recent_state(participant_id: str, question_id: str) -> tuple[int, int, int]:
-    """返回 (上次**展示**的等级, 连续失败次数, 已**解锁**上限)。"""
+def _recent_state(participant_id: str, question_id: str) -> tuple[int, int]:
+    """返回 (连续失败次数, 已**解锁**上限)。
+
+    口径②-A 下"上次**展示**等级"不再参与计算（请求不升级），所以这里不读 `hint_level`。
+    """
     with db.connect() as conn:
         rows = conn.execute(
-            """SELECT hint_level, hint_unlocked_level, pass_status FROM submission_log
+            """SELECT hint_unlocked_level, pass_status FROM submission_log
                WHERE participant_id=? AND question_id=? ORDER BY id DESC LIMIT 10""",
             (participant_id, question_id),
         ).fetchall()
     if not rows:
-        return 0, 0, 0
-    last_level = int(rows[0]["hint_level"])
+        return 0, 0
     last_unlocked = int(rows[0]["hint_unlocked_level"])
     consecutive = 0
     for r in rows:
@@ -49,13 +51,13 @@ def _recent_state(participant_id: str, question_id: str) -> tuple[int, int, int]
             consecutive += 1
         else:
             break
-    return last_level, consecutive, last_unlocked
+    return consecutive, last_unlocked
 
 
 def _run_pipeline(*, participant_id: str, question_id: str, question: dict, code: str,
                   config: HarnessConfig, request_hint: bool, ts: str):
     """判题 → 按注册表遍历组件 → 兜底。返回 `(ctx, judge_result)`，**不写日志**。"""
-    last_level, consecutive_fail, last_unlocked = _recent_state(participant_id, question_id)
+    consecutive_fail, last_unlocked = _recent_state(participant_id, question_id)
 
     # 1) 判题：与运行配置无关，任何情况都要跑
     result = judge(question, code)
@@ -74,7 +76,6 @@ def _run_pipeline(*, participant_id: str, question_id: str, question: dict, code
         ts=ts,
         request_hint=request_hint,
         judge_result=result,
-        last_level=last_level,
         last_unlocked=last_unlocked,
         consecutive_fail=consecutive_fail,
     )
