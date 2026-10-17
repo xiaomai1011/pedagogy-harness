@@ -141,6 +141,8 @@
   // ---------- 状态 ----------
   const SAMPLE = "a, b = map(int, input().split())\nprint(a + b)\n";
   const state = { qid: null, question: null, editorReady: false, usingMonaco: false };
+  // 阶段中文名（phase 由题库自描述，见 docs/contracts.md §2）
+  const PHASE_LABEL = { pretest: "前测", practice: "练习", posttest: "后测" };
 
   // 学生界面**不显示分组**：正式实验统一 exp（契约 §5），这里恒定发送。
   const GROUP = "exp";
@@ -222,7 +224,8 @@
       return;
     }
     $("qlist").innerHTML = list.map((q) =>
-      `<div class="q-item" data-id="${esc(q.id)}">${esc(q.id)} · ${esc(q.title)}</div>`).join("");
+      `<div class="q-item" data-id="${esc(q.id)}">${esc(q.id)} · ${esc(q.title)}` +
+      `<span class="muted" style="font-size:11px"> ${esc(PHASE_LABEL[q.phase] || "未标注")}</span></div>`).join("");
     document.querySelectorAll(".q-item").forEach((el) => {
       el.onclick = () => selectQuestion(el.dataset.id);
     });

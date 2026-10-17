@@ -1,0 +1,29 @@
+{
+  "id": "P001",
+  "title": "两数之和",
+  "statement": "读入两个用空格分隔的整数，输出它们的和。",
+  "examples": [
+    { "input": "1 2", "output": "3", "explain": "1 + 2 = 3" }
+  ],
+  "test_cases": [
+    { "input": "1 2", "expected": "3", "hidden": false },
+    { "input": "1000000 2000000", "expected": "3000000", "hidden": true },
+    { "input": "-5 5", "expected": "0", "hidden": true }
+  ],
+  "reference_solution": "a, b = map(int, input().split())\nprint(a + b)\n",
+  "knowledge_points": ["标准输入输出", "变量与赋值"],
+  "difficulty": 1,
+  "phase": "practice",
+  "error_samples": [
+    {
+      "code": "a, b = input().split()\nprint(a + b)",
+      "error_type": "runtime",
+      "knowledge_point": "变量与赋值"
+    },
+    {
+      "code": "print(int(input()))",
+      "error_type": "wrong_output",
+      "knowledge_point": "标准输入输出"
+    }
+  ]
+}
