@@ -1,8 +1,18 @@
-"""主干端到端：开关真的改变行为；防泄答案在校验层真的生效。"""
+"""主干端到端：开关真的改变行为；防泄答案在校验层真的生效；口径②的解锁/展示分离。"""
 
+from app import db
 from app import llm as llm_mod
 from app.harness.config_switch import PRESETS
-from app.harness.pipeline import handle_submission
+from app.harness.pipeline import handle_hint_request, handle_submission
+
+
+def _log_count(participant_id: str) -> int:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM submission_log WHERE participant_id=?",
+            (participant_id,),
+        ).fetchone()
+    return int(row["n"])
 
 
 def test_exp_with_request_gives_level1(monkeypatch):
@@ -28,3 +38,44 @@ def test_ctrl_is_bare_llm(monkeypatch):
                             code="print(1)", config=PRESETS["ctrl"])
     assert out["source"] == "raw_llm"
     assert out["message"] == "裸模型回答"
+
+
+def test_submit_without_request_never_shows_hint(monkeypatch):
+    """口径②：没请求就不展示提示（哪怕大模型能生成）。"""
+    monkeypatch.setattr(llm_mod, "llm", lambda system, user: "这段提示不该出现在界面上")
+    out = handle_submission(participant_id="T_E2E_4", question_id="P001",
+                            code="print(1)", config=PRESETS["exp"], request_hint=False)
+    assert out["hint_level"] == 0
+    assert "这段提示不该出现在界面上" not in out["message"]
+
+
+def test_two_consecutive_failures_unlock_but_do_not_show(monkeypatch):
+    """连败 2 次只解锁：日志里 `hint_unlocked_level=1`，但 `hint_level` 仍是 0。"""
+    monkeypatch.setattr(llm_mod, "llm", lambda system, user: "提示正文")
+    pid = "T_E2E_5"
+    handle_submission(participant_id=pid, question_id="P001", code="print(1)",
+                      config=PRESETS["exp"])
+    out = handle_submission(participant_id=pid, question_id="P001", code="print(1)",
+                            config=PRESETS["exp"])
+    assert out["hint_level"] == 0
+    assert out["log"]["hint_unlocked_level"] == 1
+
+
+def test_submission_log_carries_phase(monkeypatch):
+    """`phase` 由题库元数据自描述；题库没写时兜底 `practice`，且前端传不进来。"""
+    monkeypatch.setattr(llm_mod, "llm", lambda system, user: "提示正文")
+    out = handle_submission(participant_id="T_E2E_6", question_id="P001",
+                            code="print(1)", config=PRESETS["exp"])
+    assert out["log"]["phase"] == "practice"
+
+
+def test_hint_request_does_not_write_submission_log(monkeypatch):
+    """只看提示 → **不落库**，`submit_seq` 不被虚增（契约 §3）。"""
+    monkeypatch.setattr(llm_mod, "llm", lambda system, user: "先确认这一步的输入是什么。")
+    pid = "T_HINT_1"
+    before = _log_count(pid)
+    out = handle_hint_request(participant_id=pid, question_id="P001",
+                              code="print(1)", config=PRESETS["exp"])
+    assert out["log"] is None
+    assert out["hint_level"] == 1
+    assert _log_count(pid) == before

@@ -11,22 +11,33 @@ DB_PATH = os.environ.get("PH_DB", "pedagogy.sqlite")
 # 契约 §3 日志表
 LOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS submission_log (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts             TEXT    NOT NULL,
-    participant_id TEXT    NOT NULL,
-    group_id       TEXT    NOT NULL,
-    question_id    TEXT    NOT NULL,
-    submit_seq     INTEGER NOT NULL,
-    status         TEXT    NOT NULL,
-    error_type     TEXT    NOT NULL,
-    error_class    TEXT    NOT NULL,
-    error_kp       TEXT    NOT NULL DEFAULT '',
-    hint_level     INTEGER NOT NULL DEFAULT 0,
-    hint_requested INTEGER NOT NULL DEFAULT 0,
-    pass_status    INTEGER NOT NULL DEFAULT 0,
-    elapsed_ms     INTEGER NOT NULL DEFAULT 0
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  TEXT    NOT NULL,
+    participant_id      TEXT    NOT NULL,
+    group_id            TEXT    NOT NULL,
+    question_id         TEXT    NOT NULL,
+    phase               TEXT    NOT NULL DEFAULT 'practice',
+    submit_seq          INTEGER NOT NULL,
+    status              TEXT    NOT NULL,
+    error_type          TEXT    NOT NULL,
+    error_class         TEXT    NOT NULL,
+    error_kp            TEXT    NOT NULL DEFAULT '',
+    hint_level          INTEGER NOT NULL DEFAULT 0,
+    hint_unlocked_level INTEGER NOT NULL DEFAULT 0,
+    hint_requested      INTEGER NOT NULL DEFAULT 0,
+    pass_status         INTEGER NOT NULL DEFAULT 0,
+    elapsed_ms          INTEGER NOT NULL DEFAULT 0
 );
 """
+
+# 冻结后新增列（2026-10-17，契约 §3 修订）的兼容迁移。
+# 旧库里的 submission_log 没有这两列，而 `CREATE TABLE IF NOT EXISTS` **不会补列**，
+# 不迁移的话 INSERT 会直接报 "no such column"（本仓库已有旧库 pedagogy.sqlite）。
+_COLUMN_MIGRATIONS = {
+    "phase": "ALTER TABLE submission_log ADD COLUMN phase TEXT NOT NULL DEFAULT 'practice'",
+    "hint_unlocked_level":
+        "ALTER TABLE submission_log ADD COLUMN hint_unlocked_level INTEGER NOT NULL DEFAULT 0",
+}
 
 # 契约 §4 错误记忆表（按 participant_id 跨会话累计）
 MEMORY_SCHEMA = """
@@ -44,6 +55,14 @@ CREATE TABLE IF NOT EXISTS error_memory (
 _initialized = False
 
 
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """补齐冻结后新增的列（幂等）。"""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(submission_log)").fetchall()}
+    for col, ddl in _COLUMN_MIGRATIONS.items():
+        if col not in have:
+            conn.execute(ddl)
+
+
 def connect() -> sqlite3.Connection:
     """连接数据库，并在首次连接时自动建表。
 
@@ -56,6 +75,7 @@ def connect() -> sqlite3.Connection:
     if not _initialized:
         conn.execute(LOG_SCHEMA)
         conn.execute(MEMORY_SCHEMA)
+        _ensure_columns(conn)
         conn.commit()
         _initialized = True
     return conn
@@ -77,19 +97,19 @@ def next_submit_seq(participant_id: str, question_id: str) -> int:
 
 
 def log_submission(*, ts: str, participant_id: str, group_id: str, question_id: str,
-                   submit_seq: int, status: str, error_type: str, error_class: str,
-                   error_kp: str, hint_level: int, hint_requested: int,
+                   phase: str, submit_seq: int, status: str, error_type: str, error_class: str,
+                   error_kp: str, hint_level: int, hint_unlocked_level: int, hint_requested: int,
                    pass_status: int, elapsed_ms: int) -> None:
     with connect() as conn:
         conn.execute(
             """INSERT INTO submission_log
-               (ts, participant_id, group_id, question_id, submit_seq, status,
-                error_type, error_class, error_kp, hint_level, hint_requested,
-                pass_status, elapsed_ms)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (ts, participant_id, group_id, question_id, submit_seq, status,
-             error_type, error_class, error_kp, hint_level, hint_requested,
-             pass_status, elapsed_ms),
+               (ts, participant_id, group_id, question_id, phase, submit_seq, status,
+                error_type, error_class, error_kp, hint_level, hint_unlocked_level,
+                hint_requested, pass_status, elapsed_ms)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (ts, participant_id, group_id, question_id, phase, submit_seq, status,
+             error_type, error_class, error_kp, hint_level, hint_unlocked_level,
+             hint_requested, pass_status, elapsed_ms),
         )
 
 

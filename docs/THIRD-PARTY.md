@@ -5,7 +5,12 @@
 
 | 组件 / 来源 | 版本 / 链接 | 许可证 | 用途 | 是否与创新点相关 |
 |---|---|---|---|---|
-| （待填写） | | | | |
+| Monaco Editor（Microsoft） | `0.57.0` · https://github.com/microsoft/vscode | **MIT** | 前端代码编辑器（学生答题区）。已**本地化**到 `web/vendor/monaco/`，**离线可用、不依赖 CDN** | ❌ 否（纯编辑器基座，非创新点） |
+
+> **说明（2026-10-17）**：前端编辑器由 CodeMirror（CDN 版，已移除）更换为**本地化 Monaco**。
+> 只启用 **python 语法着色**（`basic-languages`），**未接入**任何语言服务/自动补全
+> —— 补全与签名提示等同于把 API 用法直接喂给学生，与"绝不给答案"的核心主张冲突。
+> 许可证原文随包存放：`web/vendor/monaco/LICENSE`。
 
 ## 说明
 

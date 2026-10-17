@@ -3,8 +3,13 @@
 四级：L1 方向 → L2 思路骨架 → L3 伪代码 → L4 代码片段
 （L4 只给局部代码片段，**绝不给完整可运行答案**）
 
-**升级规则（B 口径）**：只有学生**主动请求提示**、或**连续失败 2 次**时才升一级。
-另一种"每次提交自动升一级"的口径已被否决——那会让学生在未求助时被动拿到提示。
+**口径②（2026-10-17 定案）：「解锁」与「展示」是两个独立状态。**
+- `unlocked_level`（已解锁上限）：**允许**展示到哪一级。**连败只解锁**——
+  连续失败累计到 2 的倍数就解锁一级（2 次 → L1，4 次 → L2，6 次 → L3，8 次及以上 → L4）。
+- `hint_level`（本次展示）：**这次实际给了哪一级**（0 = 没展示）。**只有学生主动请求才展示**，
+  请求时至少推进一级，且不得越过已解锁上限；上限 L4。
+
+被否决的口径：①"每次提交自动升一级"；②"连败 2 次即自动展示"（会让学生**未求助就被动拿到提示**）。
 
 **等级 0**：初次进入题目只给题目与判题反馈，不给任何教学提示。
 
@@ -33,12 +38,28 @@ LEVEL_GUIDE = {
 }
 
 
-def next_level(current: int, *, requested: bool, consecutive_fail: int) -> int:
-    """计算本次应给的提示等级。等级 0 = 不给教学提示。"""
-    current = max(0, min(current, MAX_LEVEL))
-    if requested or consecutive_fail >= 2:
-        return min(current + 1, MAX_LEVEL)
-    return current
+def next_unlock(*, prev_unlocked: int, consecutive_fail: int) -> int:
+    """连败解锁等级：只解锁、不展示。
+
+    连续失败累计到 2 的倍数就解锁一级——2 次 → L1，4 次 → L2，6 次 → L3，8 次及以上 → L4。
+    取"历史解锁上限"与"本次连败推出的等级"的较大者，保证**单调不回退**。
+    """
+    by_fail = min(consecutive_fail // 2, MAX_LEVEL)
+    return max(min(prev_unlocked, MAX_LEVEL), by_fail)
+
+
+def next_state(*, prev_shown: int, prev_unlocked: int, consecutive_fail: int,
+               requested: bool) -> tuple[int, int]:
+    """算出本次的 (展示等级, 已解锁上限)。口径②的核心状态机。
+
+    - **未请求** → 展示等级恒为 `0`（哪怕已解锁到 L4），解锁上限只按连败推进；
+    - **请求** → 展示并推进到下一级，且不得越过已解锁上限（最少给到 L1，上限 L4）。
+    """
+    unlocked = next_unlock(prev_unlocked=prev_unlocked, consecutive_fail=consecutive_fail)
+    if not requested:
+        return 0, unlocked
+    unlocked = min(max(unlocked, prev_shown + 1), MAX_LEVEL)
+    return unlocked, unlocked
 
 
 def _fail_feedback(ctx) -> str:
@@ -117,8 +138,12 @@ def render(ctx) -> str:
         return _success_message(ctx)
 
     if ctx.hint_level <= 0:
-        # 等级 0：只给题目与判题反馈，不给教学提示
-        return _fail_feedback(ctx) + "\n\n（需要提示时，可以点「请求提示」。）"
+        # 等级 0：只给题目与判题反馈，不给教学提示。
+        # 已解锁但学生没请求时，明确告知"已解锁 L?、可点请求"，而不是白给提示。
+        text = _fail_feedback(ctx)
+        if ctx.unlocked_level > 0:
+            return text + f"\n\n（已解锁 L{ctx.unlocked_level} 提示；点击「请求提示」查看。）"
+        return text + "\n\n（需要提示时，可以点「请求提示」。）"
 
     hint, _source = _llm_hint(ctx)
     return _fail_feedback(ctx) + "\n\n" + hint
@@ -131,10 +156,13 @@ class HintLadderComponent(TeachingComponent):
     order = 30
 
     def run(self, ctx) -> None:
-        ctx.hint_level = next_level(
-            ctx.last_level,
-            requested=ctx.request_hint,
+        # 口径②：先按连败算"解锁到哪一级"，再看"本次展示不展示"
+        # 注意顺序：next_state 返回 (展示等级, 已解锁上限)
+        ctx.hint_level, ctx.unlocked_level = next_state(
+            prev_shown=ctx.last_level,
+            prev_unlocked=ctx.last_unlocked,
             consecutive_fail=ctx.consecutive_fail,
+            requested=ctx.request_hint,
         )
         ctx.message = render(ctx)
         ctx.source = "harness"

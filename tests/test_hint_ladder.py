@@ -1,4 +1,4 @@
-"""提示阶梯：升级规则（B 口径）与呈现逻辑。"""
+"""提示阶梯：口径②（解锁 / 展示两状态）与呈现逻辑。"""
 
 import types
 
@@ -25,31 +25,39 @@ def _ctx(**kw):
         request_hint=False,
         judge_result=_Judge(status=status),
         last_level=0,
+        last_unlocked=0,
         consecutive_fail=0,
         classification=None,
         memory_hint="",
         persona_system="",
         hint_level=0,
+        unlocked_level=0,
     )
     base.update(kw)
     return types.SimpleNamespace(**base)
 
 
-def test_next_level_requires_request_or_two_failures():
-    """B 口径：不求助、且未连败 2 次时，等级不变。"""
-    assert hl.next_level(0, requested=False, consecutive_fail=0) == 0
-    assert hl.next_level(0, requested=False, consecutive_fail=1) == 0
-    assert hl.next_level(1, requested=False, consecutive_fail=0) == 1
+def test_not_requested_never_shows_even_when_unlocked():
+    """口径②：学生没主动请求，就一个字提示都不展示。"""
+    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=0, requested=False) == (0, 0)
+    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=1, requested=False) == (0, 0)
+    assert hl.next_state(prev_shown=2, prev_unlocked=2, consecutive_fail=4, requested=False) == (0, 2)
 
 
-def test_next_level_upgrades_on_request_or_two_failures():
-    assert hl.next_level(0, requested=True, consecutive_fail=0) == 1
-    assert hl.next_level(0, requested=False, consecutive_fail=2) == 1
-    assert hl.next_level(3, requested=True, consecutive_fail=0) == 4
+def test_two_consecutive_failures_only_unlock():
+    """连败 2 次**只解锁**：解锁 L1，但本次不展示。"""
+    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=2, requested=False) == (0, 1)
+    assert hl.next_state(prev_shown=0, prev_unlocked=1, consecutive_fail=4, requested=False) == (0, 2)
 
 
-def test_next_level_caps_at_four():
-    assert hl.next_level(4, requested=True, consecutive_fail=5) == 4
+def test_request_shows_and_advances_one_level():
+    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=0, requested=True) == (1, 1)
+    assert hl.next_state(prev_shown=1, prev_unlocked=1, consecutive_fail=0, requested=True) == (2, 2)
+
+
+def test_unlock_caps_at_four():
+    assert hl.next_state(prev_shown=0, prev_unlocked=0, consecutive_fail=20, requested=False) == (0, 4)
+    assert hl.next_state(prev_shown=0, prev_unlocked=4, consecutive_fail=0, requested=True) == (4, 4)
 
 
 def test_level0_gives_no_teaching_hint():
@@ -58,6 +66,12 @@ def test_level0_gives_no_teaching_hint():
     assert "未通过测试" in out
     assert "请求提示" in out
     assert "语法" in out
+
+
+def test_level0_tells_student_what_is_unlocked():
+    """已解锁但没请求：只提示"已解锁 L?、可点请求"，不给提示正文。"""
+    out = hl.render(_ctx(hint_level=0, unlocked_level=2))
+    assert "已解锁 L2" in out
 
 
 def test_hint_passes_through_when_clean(monkeypatch):

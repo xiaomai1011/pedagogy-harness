@@ -4,80 +4,374 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>教学法 Harness 练习助手</title>
-  <!-- CodeMirror（CDN） -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css" />
-  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
   <style>
-    body { font-family: -apple-system, "Microsoft YaHei", sans-serif; margin: 24px; color: #222; }
-    .row { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-    .CodeMirror { height: 260px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
-    button { padding: 6px 14px; border-radius: 6px; border: 1px solid #bbb; background: #f6f6f6; cursor: pointer; }
-    button.primary { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
-    pre#out { background: #f7f7f7; border: 1px solid #ddd; border-radius: 6px; padding: 12px; white-space: pre-wrap; }
-    label { font-size: 14px; }
-    input, select { padding: 4px 8px; }
+    /* ---------- 深色主题变量 ---------- */
+    :root {
+      --bg: #1e1e1e; --bg-soft: #252526; --bg-hard: #333333;
+      --line: #3c3c3c; --fg: #d4d4d4; --fg-dim: #9d9d9d;
+      --accent: #0e639c; --accent-hover: #1177bb;
+      --ok: #4ec9b0; --warn: #d7ba7d; --bad: #f48771;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; height: 100vh; background: var(--bg); color: var(--fg);
+      font-family: -apple-system, "Microsoft YaHei", "Segoe UI", sans-serif; font-size: 14px;
+    }
+    /* ---------- 五区布局 ---------- */
+    .app {
+      height: 100vh; display: grid;
+      grid-template-columns: 48px 300px 1fr;
+      grid-template-rows: 40px 1fr 1fr 24px;
+      grid-template-areas:
+        "titlebar titlebar titlebar"
+        "activity sidebar  editor"
+        "activity sidebar  panel"
+        "status   status   status";
+    }
+    .titlebar { grid-area: titlebar; display: flex; align-items: center; gap: 12px;
+      padding: 0 12px; background: var(--bg-hard); border-bottom: 1px solid var(--line); }
+    .titlebar h1 { font-size: 14px; font-weight: 600; margin: 0; }
+    .badges { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+    .badge { font-size: 11px; padding: 2px 8px; border: 1px solid var(--line);
+      border-radius: 10px; color: var(--fg-dim); background: var(--bg-soft); }
+    .activity { grid-area: activity; background: var(--bg-hard);
+      border-right: 1px solid var(--line); display: flex; flex-direction: column;
+      align-items: center; padding-top: 12px; gap: 14px; }
+    .activity span { font-size: 18px; color: var(--fg-dim); cursor: default; }
+    .sidebar { grid-area: sidebar; background: var(--bg-soft); border-right: 1px solid var(--line);
+      overflow: auto; padding: 10px 12px; }
+    .editor-wrap { grid-area: editor; position: relative; min-height: 0; }
+    #editor { position: absolute; inset: 0; }
+    #code-ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none;
+      background: #1e1e1e; color: #d4d4d4; border: 0; padding: 10px;
+      font-family: Consolas, Menlo, monospace; font-size: 13px; }
+    .editor-toolbar { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 8px; z-index: 5; }
+    .panel { grid-area: panel; background: var(--bg-soft); border-top: 1px solid var(--line);
+      display: flex; flex-direction: column; min-height: 0; }
+    .tabs { display: flex; gap: 2px; background: var(--bg-hard); border-bottom: 1px solid var(--line); }
+    .tabs button { background: transparent; border: 0; color: var(--fg-dim); padding: 7px 14px;
+      cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
+    .tabs button.active { color: #fff; border-bottom-color: var(--accent); }
+    .tab-body { padding: 10px 12px; overflow: auto; white-space: pre-wrap; flex: 1;
+      font-family: Consolas, Menlo, monospace; font-size: 13px; line-height: 1.6; }
+    .statusbar { grid-area: status; background: var(--bg-hard); border-top: 1px solid var(--line);
+      display: flex; align-items: center; gap: 16px; padding: 0 12px; font-size: 12px;
+      color: var(--fg-dim); }
+    /* ---------- 通用控件 ---------- */
+    button.btn { padding: 5px 12px; border-radius: 4px; border: 1px solid var(--line);
+      background: var(--bg-hard); color: var(--fg); cursor: pointer; font-size: 13px; }
+    button.btn:disabled { opacity: .45; cursor: not-allowed; }
+    button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+    input.pid { background: var(--bg); border: 1px solid var(--line); color: var(--fg);
+      padding: 3px 8px; border-radius: 4px; width: 84px; }
+    .q-item { padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+    .q-item:hover { background: var(--bg-hard); }
+    .q-item.sel { background: var(--accent); color: #fff; }
+    h3.sec { font-size: 12px; text-transform: uppercase; color: var(--fg-dim);
+      margin: 14px 0 6px; letter-spacing: .5px; }
+    pre.chunk { background: var(--bg-hard); border: 1px solid var(--line); border-radius: 4px;
+      padding: 8px; overflow: auto; font-size: 12px; margin: 6px 0; }
+    .flag { color: var(--warn); border: 1px solid var(--warn); border-radius: 4px;
+      padding: 4px 8px; display: inline-block; margin-bottom: 6px; font-size: 12px; }
+    .hint-badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
+      background: var(--accent); color: #fff; font-size: 12px; margin-right: 6px; }
+    .muted { color: var(--fg-dim); }
   </style>
 </head>
 <body>
-  <h1>教学法 Harness 练习助手</h1>
-  <p style="font-size:13px;color:#666">Phase 1 骨架：判题与三组件当前为桩实现，用于跑通纵切链路。</p>
-
-  <div class="row">
-    <label>被试编号 <input id="pid" value="S01" size="6" /></label>
-    <label>题目
-      <select id="qid"><option value="P001">P001</option></select>
+<div class="app">
+  <header class="titlebar">
+    <h1>教学法 Harness 练习助手</h1>
+    <label class="muted" style="font-size:12px">被试编号
+      <input class="pid" id="pid" value="S01" />
     </label>
-    <label>分组
-      <select id="group">
-        <option value="exp">exp 实验组（组件全开）</option>
-        <option value="ctrl">ctrl 对照组（裸大模型）</option>
-        <option value="abl_hint">abl_hint 消融·只留提示阶梯</option>
-        <option value="abl_cls">abl_cls 消融·只留分类器</option>
-        <option value="abl_mem">abl_mem 消融·只留错误记忆</option>
-      </select>
-    </label>
-  </div>
+    <!-- ① 组件状态徽标：演示"组件可插拔"用，数据来自 GET /api/components -->
+    <div class="badges" id="badges"></div>
+  </header>
 
-  <textarea id="editor"># 在此写你的代码
-a, b = map(int, input().split())
-print(a + b)
-</textarea>
+  <!-- ② 活动栏 -->
+  <nav class="activity">
+    <span title="题目">▤</span>
+    <span title="反馈">◍</span>
+  </nav>
 
-  <div class="row" style="margin-top:12px">
-    <button class="primary" onclick="submit(false)">提交代码</button>
-    <button onclick="submit(true)">提交并请求提示</button>
-  </div>
+  <!-- ③ 侧边栏：题目列表 + 题干 + 示例 + 可见用例 -->
+  <aside class="sidebar">
+    <h3 class="sec">题目列表</h3>
+    <div id="qlist" class="muted">加载中…</div>
+    <div id="qdetail"></div>
+  </aside>
 
-  <h3>系统反馈</h3>
-  <pre id="out">（等待提交）</pre>
+  <!-- ④ 编辑区 -->
+  <main class="editor-wrap">
+    <div id="editor"></div>
+    <div class="editor-toolbar">
+      <button class="btn" id="btn-hint" disabled>请求提示</button>
+      <button class="btn primary" id="btn-submit" disabled>提交代码</button>
+    </div>
+  </main>
 
-  <script>
-    const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
-      mode: "python", lineNumbers: true, indentUnit: 4
-    });
+  <!-- ⑤ 底部面板 -->
+  <section class="panel">
+    <div class="tabs">
+      <button data-tab="judge" class="active">判题输出</button>
+      <button data-tab="hint">教学提示</button>
+      <button data-tab="trace">组件轨迹</button>
+    </div>
+    <div class="tab-body" id="tab-judge">（等待提交）</div>
+    <div class="tab-body" id="tab-hint" style="display:none">（等待提交）</div>
+    <div class="tab-body" id="tab-trace" style="display:none">（等待提交）</div>
+  </section>
 
-    async function submit(requestHint) {
-      const body = {
-        participant_id: document.getElementById("pid").value,
-        question_id: document.getElementById("qid").value,
-        code: editor.getValue(),
-        group: document.getElementById("group").value,
-        request_hint: requestHint
-      };
-      const out = document.getElementById("out");
-      out.textContent = "提交中…";
-      try {
-        const res = await fetch("/api/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
+  <footer class="statusbar">
+    <span id="st-pid">S01</span>
+    <span id="st-qid">—</span>
+    <span id="st-phase">—</span>
+    <span id="st-level">提示等级 L0</span>
+    <span id="st-unlocked">已解锁 L0</span>
+    <span id="st-seq">提交序号 —</span>
+    <span id="st-ms">耗时 —</span>
+  </footer>
+</div>
+
+<!-- Monaco（**本地** AMD 构建，断网可用；不用 CDN） -->
+<script src="/vendor/monaco/vs/loader.js"></script>
+<script>
+  // ---------- 状态 ----------
+  const SAMPLE = "a, b = map(int, input().split())\nprint(a + b)\n";
+  const state = { qid: null, question: null, editorReady: false, usingMonaco: false };
+
+  // 学生界面**不显示分组**：正式实验统一 exp（契约 §5），这里恒定发送。
+  const GROUP = "exp";
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s === undefined || s === null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  // ---------- 编辑器：Monaco 优先，加载失败则退化为纯 textarea ----------
+  function getCode() {
+    return state.usingMonaco ? monacoEditor.getValue() : $("code-ta").value;
+  }
+  function setReady() {
+    state.editorReady = true;
+    $("btn-submit").disabled = false;
+    $("btn-hint").disabled = false;
+  }
+  function initFallbackEditor(reason) {
+    if (state.usingMonaco) return;   // Monaco 已经起来了就别再退化，否则会把编辑器换掉
+    if (!state.editorReady) console.warn("Monaco 未就绪，退化为纯文本框：", reason);
+    const ta = document.createElement("textarea");
+    ta.id = "code-ta";
+    ta.value = SAMPLE;
+    $("editor").replaceWith(ta);
+    state.usingMonaco = false;
+    setReady();
+  }
+  let monacoEditor = null;
+  function initEditor() {
+    if (!window.require) return initFallbackEditor("loader.js 未加载");
+    // 本地 AMD 构建要求显式指出 **worker** 路径，否则离线打开会卡住/报错
+    self.MonacoEnvironment = {
+      getWorkerUrl: () => "/vendor/monaco/vs/base/worker/workerMain.js"
+    };
+    require.config({ paths: { vs: "/vendor/monaco/vs" } });
+    // 兜底：8 秒还没起来才退化（已就绪则不动它）
+    setTimeout(() => initFallbackEditor("加载超时"), 8000);
+    try {
+      require(["vs/editor/editor.main"], function () {
+        if (state.editorReady) return;
+        monacoEditor = monaco.editor.create($("editor"), {
+          value: SAMPLE, language: "python", theme: "vs-dark",
+          automaticLayout: true, minimap: { enabled: false }, fontSize: 13,
+          // 只做语法着色：**关掉**补全/触发器，避免把 API 用法喂给学生（与"不给答案"主张一致）
+          quickSuggestions: false, suggestOnTriggerCharacters: false,
+          wordBasedSuggestions: "off", parameterHints: { enabled: false }
         });
-        out.textContent = JSON.stringify(await res.json(), null, 2);
-      } catch (e) {
-        out.textContent = "请求失败：" + e;
-      }
+        state.usingMonaco = true;
+        setReady();
+      }, function () { initFallbackEditor("editor.main 加载失败"); });
+    } catch (e) {
+      initFallbackEditor(e);
     }
-  </script>
+  }
+
+  // ---------- ① 组件徽标 ----------
+  async function loadComponents() {
+    try {
+      const r = await fetch("/api/components");
+      const d = await r.json();
+      $("badges").innerHTML = (d.registered || [])
+        .map((n) => `<span class="badge">${esc(n)}</span>`).join("");
+    } catch (e) { $("badges").innerHTML = '<span class="badge">组件未知</span>'; }
+  }
+
+  // ---------- ③ 题目 ----------
+  async function loadQuestionList() {
+    const r = await fetch("/api/questions");
+    const list = await r.json();
+    if (!list.length) {
+      // 题库（data/questions/*.json）由岗位 4-A 交付；未就绪时留一个手动入口，
+      // 后端对未收录的题号会回一个占位题，链路照样能跑通。
+      $("qlist").innerHTML =
+        '<span class="muted">题库未就绪（岗位 4-A 交付后自动出现在这里）</span>' +
+        '<div style="margin-top:8px;display:flex;gap:6px">' +
+        '<input class="pid" id="qid-manual" value="P001" />' +
+        '<button class="btn" id="qid-load">加载</button></div>';
+      $("qid-load").onclick = () => selectQuestion(($("qid-manual").value || "").trim() || "P001");
+      return;
+    }
+    $("qlist").innerHTML = list.map((q) =>
+      `<div class="q-item" data-id="${esc(q.id)}">${esc(q.id)} · ${esc(q.title)}</div>`).join("");
+    document.querySelectorAll(".q-item").forEach((el) => {
+      el.onclick = () => selectQuestion(el.dataset.id);
+    });
+    selectQuestion(list[0].id);
+  }
+
+  async function selectQuestion(qid) {
+    state.qid = qid;
+    document.querySelectorAll(".q-item").forEach((el) =>
+      el.classList.toggle("sel", el.dataset.id === qid));
+    state.question = await (await fetch(`/api/questions/${encodeURIComponent(qid)}`)).json();
+    const q = state.question;
+    $("qdetail").innerHTML = `
+      <h3 class="sec">当前题目</h3>
+      <div><strong>${esc(q.id)} · ${esc(q.title)}</strong>
+        <span class="muted">（难度 ${esc(q.difficulty)}）</span></div>
+      <div class="muted" style="font-size:12px">阶段：${esc(q.phase || "未标注")}</div>
+      <div style="margin-top:6px;white-space:pre-wrap">${esc(q.statement)}</div>
+      <h3 class="sec">示例</h3>
+      ${(q.examples || []).map((e) => `<pre class="chunk">输入：${esc(e.input)}
+输出：${esc(e.output)}${e.explain ? "\n说明：" + esc(e.explain) : ""}</pre>`).join("") || '<span class="muted">无</span>'}
+      <h3 class="sec">可见用例</h3>
+      ${(q.test_cases || []).map((c) => `<pre class="chunk">输入：${esc(c.input)}
+期望输出：${esc(c.expected)}</pre>`).join("") || '<span class="muted">无</span>'}`;
+    $("st-qid").textContent = q.id;
+    $("st-phase").textContent = "阶段 " + (q.phase || "未标注");
+  }
+
+  // ---------- ⑤ 渲染 ----------
+  function switchTab(name) {
+    document.querySelectorAll(".tabs button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.tab === name));
+    ["judge", "hint", "trace"].forEach((t) => {
+      $("tab-" + t).style.display = (t === name) ? "" : "none";
+    });
+  }
+
+  function renderJudge(d) {
+    const failed = d.failed_cases || [];
+    const lines = [`判题状态：${d.status}`];
+    // 不显示"通过 x/y"：响应里没有 total_cases / passed_cases（见技术方回执第三回 §三）
+    if (d.status === "pass") lines.push("全部可见与隐藏用例均通过。");
+    else lines.push(`未通过 ${failed.length} 个用例。`);
+    failed.forEach((c) => {
+      lines.push(`\n· 用例 #${c.case_index}${c.hidden ? "（隐藏用例，不回显输入/期望）" : ""}`);
+      if (!c.hidden) {
+        lines.push(`  输入：${c.input}`);
+        lines.push(`  期望：${c.expected}`);
+      }
+      lines.push(`  实际：${c.actual}`);
+    });
+    if (d.stderr) lines.push(`\n错误输出：\n${d.stderr}`);
+    $("tab-judge").textContent = lines.join("\n");
+  }
+
+  function renderHint(d) {
+    const parts = [];
+    parts.push(`<span class="hint-badge">本次展示 L${d.hint_level}</span>`
+      + `<span class="hint-badge">已解锁 L${d.unlocked_level}</span>`);
+    if (d.source === "raw_llm") {
+      // 诚实性要求：兜底回复必须显著标注
+      parts.push('<div class="flag">⚠ 兜底回复：本次未走教学组件（source = raw_llm）</div>');
+    }
+    if (d.knowledge_point) parts.push(`<div class="muted">知识点：${esc(d.knowledge_point)}</div>`);
+    if (d.memory_hint) parts.push(`<div class="muted">跨对话记忆：${esc(d.memory_hint)}</div>`);
+    parts.push(`<div style="margin-top:8px;white-space:pre-wrap">${esc(d.message)}</div>`);
+    $("tab-hint").innerHTML = parts.join("");
+  }
+
+  function renderTrace(d) {
+    const c = d.components || { executed: [], skipped: [] };
+    $("tab-trace").textContent =
+      `已执行组件：${(c.executed || []).join(" → ") || "（无）"}\n` +
+      `被跳过组件：${(c.skipped || []).join(", ") || "（无）"}\n`;
+  }
+
+  function renderStatus(d) {
+    $("st-pid").textContent = $("pid").value || "（未填编号）";
+    $("st-level").textContent = `提示等级 L${d.hint_level}`;
+    $("st-unlocked").textContent = `已解锁 L${d.unlocked_level}`;
+    // log 为 null = 只看提示、未提交 → 不推进提交序号
+    const log = d.log;
+    $("st-seq").textContent = log ? `提交序号 ${log.submit_seq}` : "提交序号 —（仅请求提示，未提交）";
+    $("st-ms").textContent = log ? `耗时 ${log.elapsed_ms} ms` : "耗时 —";
+  }
+
+  function renderAll(d) {
+    renderJudge(d); renderHint(d); renderTrace(d); renderStatus(d);
+    switchTab(d.log ? "judge" : "hint");
+  }
+
+  // ---------- 请求 ----------
+  function baseBody() {
+    const pid = ($("pid").value || "").trim();
+    if (!pid) { alert("请先填写被试编号"); throw new Error("no participant_id"); }
+    if (!state.qid) { alert("请先选择题目"); throw new Error("no question_id"); }
+    return { participant_id: pid, question_id: state.qid, code: getCode() };
+  }
+
+  function setBusy(on, which) {
+    $("btn-submit").disabled = on || !state.editorReady;
+    $("btn-hint").disabled = on || !state.editorReady;
+    if (on) $("tab-" + which).textContent = "请求中…";
+  }
+
+  async function submit() {
+    setBusy(true, "judge");
+    try {
+      const body = baseBody();
+      body.group = GROUP;
+      body.request_hint = false;   // 提示由「请求提示」按钮单独走 /api/hint
+      const r = await fetch("/api/submit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      renderAll(await r.json());
+    } catch (e) {
+      if (e.message !== "no participant_id" && e.message !== "no question_id")
+        $("tab-judge").textContent = "请求失败：" + e;
+    } finally { setBusy(false, "judge"); }
+  }
+
+  async function requestHint() {
+    setBusy(true, "hint");
+    try {
+      const body = baseBody();
+      // 走独立接口：**不写 submission_log**，不虚增"提交次数"
+      const r = await fetch("/api/hint", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      renderAll(await r.json());
+      switchTab("hint");
+    } catch (e) {
+      if (e.message !== "no participant_id" && e.message !== "no question_id")
+        $("tab-hint").textContent = "请求失败：" + e;
+    } finally { setBusy(false, "hint"); }
+  }
+
+  // ---------- 绑定 ----------
+  document.querySelectorAll(".tabs button").forEach((b) =>
+    b.onclick = () => switchTab(b.dataset.tab));
+  $("btn-submit").onclick = submit;
+  $("btn-hint").onclick = requestHint;
+  $("pid").oninput = () => { $("st-pid").textContent = $("pid").value || "（未填编号）"; };
+
+  initEditor();
+  loadComponents();
+  loadQuestionList();
+</script>
 </body>
 </html>

@@ -29,14 +29,16 @@ class SubmissionContext:
     ts: str
     request_hint: bool
     judge_result: Any            # app.judge.JudgeResult
-    last_level: int              # 该被试在该题上次的提示等级
+    last_level: int              # 该被试在该题上次**展示**的提示等级
+    last_unlocked: int           # 该被试在该题**已解锁**的提示等级上限
     consecutive_fail: int        # 该被试在该题的连续失败次数
 
     # ---- 组件产出（后跑的组件可读前面组件的产出）----
     classification: Any = None   # 错误分类器的产出
     memory_hint: str = ""        # 错误记忆的产出
     persona_system: str = ""     # 教学人格提供的系统提示词（人格组件关闭时为空）
-    hint_level: int = 0          # 提示阶梯给出的等级（0 = 未给提示）
+    hint_level: int = 0          # 提示阶梯**本次展示**的等级（0 = 未展示）
+    unlocked_level: int = 0      # 提示阶梯**已解锁**的等级上限（口径②：解锁 ≠ 展示）
     message: str = ""            # 最终呈现给学生的反馈
     source: str = "harness"      # harness = 走了教学组件；raw_llm = 裸大模型
 
