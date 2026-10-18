@@ -52,6 +52,43 @@ CREATE TABLE IF NOT EXISTS error_memory (
 """
 
 
+# 契约 §6 事件表（关联事件日志）：一张表承载 **执行／提示／教学处理** 三类事件。
+# 用**显式列**（不做通用 JSON payload）；`UNIQUE(request_id, event_type)` 只防同一请求内重复落事件。
+EVENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS event_log (
+    event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type     TEXT    NOT NULL,
+    request_id     TEXT    NOT NULL,
+    submission_id  INTEGER,
+    participant_id TEXT    NOT NULL,
+    question_id    TEXT    NOT NULL,
+    phase          TEXT    NOT NULL DEFAULT 'practice',
+    entry          TEXT    NOT NULL DEFAULT '',
+    ts_start       TEXT    NOT NULL,
+    ts_end         TEXT,
+    elapsed_ms     INTEGER,
+    status         TEXT    NOT NULL,
+    progress       TEXT    NOT NULL DEFAULT '',
+    hint_level     INTEGER,
+    unlocked_level INTEGER,
+    hint_source    TEXT,
+    judge_status   TEXT,
+    reason_code    TEXT    NOT NULL DEFAULT '',
+    reason         TEXT    NOT NULL DEFAULT '',
+    UNIQUE (request_id, event_type)
+);
+CREATE INDEX IF NOT EXISTS idx_event_request    ON event_log(request_id);
+CREATE INDEX IF NOT EXISTS idx_event_submission ON event_log(submission_id);
+CREATE INDEX IF NOT EXISTS idx_event_type_ts    ON event_log(event_type, ts_start);
+"""
+
+_EVENT_COLUMNS = (
+    "event_type", "request_id", "submission_id", "participant_id", "question_id",
+    "phase", "entry", "ts_start", "ts_end", "elapsed_ms", "status", "progress",
+    "hint_level", "unlocked_level", "hint_source", "judge_status",
+    "reason_code", "reason",
+)
+
 _initialized = False
 
 
@@ -75,9 +112,23 @@ def connect() -> sqlite3.Connection:
     if not _initialized:
         conn.execute(LOG_SCHEMA)
         conn.execute(MEMORY_SCHEMA)
+        conn.executescript(EVENT_SCHEMA)
         _ensure_columns(conn)
         conn.commit()
         _initialized = True
+    return conn
+
+
+def connect_immediate() -> sqlite3.Connection:
+    """返回一个**显式事务**连接（`isolation_level=None`），由调用方自己
+    `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`。
+
+    为什么需要：`with connect() as conn:` 只保证"退出时提交／异常时回滚"，
+    **不保证进入时立刻开始事务** —— 先 `SELECT` 再 `UPDATE` 之间仍可能被并发插入。
+    需要"读-改-写"原子时用本函数 + `BEGIN IMMEDIATE`（一上来就取写锁）。
+    """
+    conn = connect()
+    conn.isolation_level = None
     return conn
 
 
@@ -96,33 +147,126 @@ def next_submit_seq(participant_id: str, question_id: str) -> int:
     return int(row["n"]) + 1
 
 
-def log_submission(*, ts: str, participant_id: str, group_id: str, question_id: str,
-                   phase: str, submit_seq: int, status: str, error_type: str, error_class: str,
-                   error_kp: str, hint_level: int, hint_unlocked_level: int, hint_requested: int,
-                   pass_status: int, elapsed_ms: int) -> None:
+def log_submission_conn(conn: sqlite3.Connection, **payload) -> int:
+    """**用调用方的连接**写提交行 —— 便于与教学状态放进**同一个短事务**（契约 §6.3 第 1 步）。
+
+    返回 `submission_log.id`（用于回填 `event_log.submission_id`）。
+    """
+    cur = conn.execute(
+        """INSERT INTO submission_log
+           (ts, participant_id, group_id, question_id, phase, submit_seq, status,
+            error_type, error_class, error_kp, hint_level, hint_unlocked_level,
+            hint_requested, pass_status, elapsed_ms)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (payload["ts"], payload["participant_id"], payload["group_id"], payload["question_id"],
+         payload["phase"], payload["submit_seq"], payload["status"], payload["error_type"],
+         payload["error_class"], payload["error_kp"], payload["hint_level"],
+         payload["hint_unlocked_level"], payload["hint_requested"], payload["pass_status"],
+         payload["elapsed_ms"]),
+    )
+    return int(cur.lastrowid)
+
+
+def log_submission(**payload) -> None:
     with connect() as conn:
-        conn.execute(
-            """INSERT INTO submission_log
-               (ts, participant_id, group_id, question_id, phase, submit_seq, status,
-                error_type, error_class, error_kp, hint_level, hint_unlocked_level,
-                hint_requested, pass_status, elapsed_ms)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (ts, participant_id, group_id, question_id, phase, submit_seq, status,
-             error_type, error_class, error_kp, hint_level, hint_unlocked_level,
-             hint_requested, pass_status, elapsed_ms),
-        )
+        log_submission_conn(conn, **payload)
+
+
+def get_submission_conn(conn: sqlite3.Connection, submission_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM submission_log WHERE id=?", (submission_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_submission_conn(conn: sqlite3.Connection, submission_id: int, **fields) -> None:
+    """回填提交行的教学字段（分类／提示等级等）。只允许白名单列。"""
+    allowed = {"error_class", "error_kp", "hint_level", "hint_unlocked_level"}
+    cols = [k for k in fields if k in allowed]
+    if not cols or submission_id is None:
+        return
+    conn.execute(
+        f"UPDATE submission_log SET {', '.join(f'{c}=?' for c in cols)} WHERE id=?",
+        (*[fields[c] for c in cols], submission_id),
+    )
+
+
+# ---------------------------------------------------------------- 契约 §6 事件表
+
+def create_event_conn(conn: sqlite3.Connection, **fields) -> int:
+    """**用调用方的连接**插入一条事件，返回 `event_id`。"""
+    cols = [c for c in _EVENT_COLUMNS if c in fields]
+    cur = conn.execute(
+        f"INSERT INTO event_log ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+        tuple(fields[c] for c in cols),
+    )
+    return int(cur.lastrowid)
+
+
+def create_event(**fields) -> int:
+    with connect() as conn:
+        return create_event_conn(conn, **fields)
+
+
+def update_event_conn(conn: sqlite3.Connection, event_id: int, **fields) -> None:
+    cols = [c for c in _EVENT_COLUMNS if c in fields]
+    if not cols or event_id is None:
+        return
+    conn.execute(
+        f"UPDATE event_log SET {', '.join(f'{c}=?' for c in cols)} WHERE event_id=?",
+        (*[fields[c] for c in cols], event_id),
+    )
+
+
+def update_event(event_id: int, **fields) -> None:
+    with connect() as conn:
+        update_event_conn(conn, event_id, **fields)
+
+
+def get_event_conn(conn: sqlite3.Connection, request_id: str, event_type: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM event_log WHERE request_id=? AND event_type=?",
+        (request_id, event_type)).fetchone()
+    return dict(row) if row else None
+
+
+def get_event(event_id: int) -> dict | None:
+    """按 `event_id` 读单条事件（用于读出 `progress` 等进度标记）。"""
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM event_log WHERE event_id=?", (event_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_events(*, participant_id: str | None = None, request_id: str | None = None,
+               event_type: str | None = None) -> list[dict]:
+    """按被试／请求／类型查事件（统计与测试用）。"""
+    where, args = [], []
+    for col, val in (("participant_id", participant_id),
+                     ("request_id", request_id), ("event_type", event_type)):
+        if val is not None:
+            where.append(f"{col}=?")
+            args.append(val)
+    sql = "SELECT * FROM event_log" + (f" WHERE {' AND '.join(where)}" if where else "")
+    sql += " ORDER BY event_id"
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(sql, tuple(args)).fetchall()]
+
+
+
+def upsert_error_memory_conn(conn: sqlite3.Connection, participant_id: str, error_class: str,
+                            knowledge_point: str, ts: str) -> None:
+    """**用调用方的连接**做 count+1 —— 与分类回填、进度标记放进**同一个短事务**（契约 §6.3 第 2 步）。"""
+    conn.execute(
+        """INSERT INTO error_memory (participant_id, error_class, knowledge_point, count, last_seen_ts)
+           VALUES (?,?,?,1,?)
+           ON CONFLICT(participant_id, error_class, knowledge_point)
+           DO UPDATE SET count = count + 1, last_seen_ts = excluded.last_seen_ts""",
+        (participant_id, error_class, knowledge_point, ts),
+    )
 
 
 def bump_error_memory(participant_id: str, error_class: str, knowledge_point: str, ts: str) -> None:
     """命中即 count+1（契约 §4）。仅供开启 error_memory 时调用。"""
     with connect() as conn:
-        conn.execute(
-            """INSERT INTO error_memory (participant_id, error_class, knowledge_point, count, last_seen_ts)
-               VALUES (?,?,?,1,?)
-               ON CONFLICT(participant_id, error_class, knowledge_point)
-               DO UPDATE SET count = count + 1, last_seen_ts = excluded.last_seen_ts""",
-            (participant_id, error_class, knowledge_point, ts),
-        )
+        upsert_error_memory_conn(conn, participant_id, error_class, knowledge_point, ts)
 
 
 def get_error_memory(participant_id: str) -> list[dict]:

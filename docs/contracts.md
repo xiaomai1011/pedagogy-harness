@@ -401,7 +401,7 @@ CREATE INDEX IF NOT EXISTS idx_event_type_ts    ON event_log(event_type, ts_star
 | `execution` | `judge_raised`／`db_error`／`process_exit` |
 | `hint` | `phase_disabled`／`gen_unavailable`／`model_error`／`raw_llm_path` |
 | `teaching` | `phase_disabled`／`model_error`／`db_error`／`component_skipped` |
-| 通用 | `''`（正常，无异常） |
+| 通用 | `''`（正常，无异常）／**`internal_error`**（**未识别**的内部错误 —— `db_error` 与已识别的模型故障之外的异常，**不得**一律记成 `model_error`） |
 
 ### 6.3 事务顺序（**四步确定序列**，不得只留"原则"）
 

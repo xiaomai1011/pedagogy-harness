@@ -79,30 +79,33 @@ def test_unlock_caps_at_four():
 
 def test_level0_gives_no_teaching_hint():
     """初次进入题目：只给题目与判题反馈，不给教学提示。"""
-    out = hl.render(_ctx(hint_level=0))
+    out, src = hl.render(_ctx(hint_level=0))
     assert "未通过测试" in out
     assert "请求提示" in out
     assert "语法" in out
+    assert src is None, "等级 0 不使用模型，来源应为 None"
 
 
 def test_level0_tells_student_what_is_unlocked():
     """已解锁但没请求：只提示"已解锁 L?、可点请求"，不给提示正文。"""
-    out = hl.render(_ctx(hint_level=0, unlocked_level=2))
+    out, _src = hl.render(_ctx(hint_level=0, unlocked_level=2))
     assert "已解锁 L2" in out
 
 
 def test_hint_passes_through_when_clean(monkeypatch):
     monkeypatch.setattr(hl.llm_mod, "llm", lambda system, user: "先确认这一步的输入是什么。")
-    out = hl.render(_ctx(hint_level=1))
+    out, src = hl.render(_ctx(hint_level=1))
     assert "先确认这一步的输入是什么。" in out
+    assert src == "llm", "一次过校验的来源应是 llm"
 
 
 def test_hint_falls_back_when_model_leaks_answer(monkeypatch):
     """模型两次都给代码块 → 必须改用不含代码的兜底文本，绝不泄答案。"""
     monkeypatch.setattr(hl.llm_mod, "llm", lambda system, user: "```python\nprint(1)\n```")
-    out = hl.render(_ctx(hint_level=1))
+    out, src = hl.render(_ctx(hint_level=1))
     assert "```" not in out
     assert "基本操作" in out
+    assert src == "fallback", "两次均违规 → 来源应记 fallback"
 
 
 def test_success_message_uses_injected_persona(monkeypatch):
@@ -114,12 +117,13 @@ def test_success_message_uses_injected_persona(monkeypatch):
 
     monkeypatch.setattr(hl.llm_mod, "llm", fake_llm)
     ctx = _ctx(status="pass", hint_level=4, persona_system="PERSONA_X")
-    out = hl.render(ctx)
+    out, src = hl.render(ctx)
     assert out == "你正确判断了边界条件。"
+    assert src is None, "通过态不是提示，来源应为 None"
     assert captured["system"] == "PERSONA_X"
 
 
 def test_success_message_falls_back_when_model_leaks(monkeypatch):
     monkeypatch.setattr(hl.llm_mod, "llm", lambda system, user: "```python\nprint(1)\n```")
-    out = hl.render(_ctx(status="pass", hint_level=0))
+    out, _src = hl.render(_ctx(status="pass", hint_level=0))
     assert "```" not in out

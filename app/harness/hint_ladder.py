@@ -98,10 +98,20 @@ def _hint_prompt(ctx) -> str:
 def _llm_hint(ctx) -> tuple[str, str]:
     """生成提示文本。返回 (文本, 来源)。
 
-    来源取值：`llm` 一次通过校验 / `llm_retry` 重试后通过 / `fallback` 校验失败改用兜底文本。
+    来源取值：`llm` 一次通过校验 / `llm_retry` 重试后通过 / `fallback` 走兜底文本。
+
+    **模型故障分两类**（契约 §6.3 硬规则 4）：
+
+    - **可预期**（超时／连接／限流／服务端错误）→ **受控降级**为兜底文本，来源记 `fallback`；
+    - **未预期**（代码缺陷、解析错误等）→ **原样抛出**，**不得**用兜底吞掉。
     """
     system = ctx.persona_system or DEFAULT_PERSONA
-    text = llm_mod.llm(system=system, user=_hint_prompt(ctx)).strip()
+    try:
+        text = llm_mod.llm(system=system, user=_hint_prompt(ctx)).strip()
+    except Exception as exc:
+        if not llm_mod.is_expected_failure(exc):
+            raise
+        return leak_guard.fallback(ctx.hint_level, ctx.classification), "fallback"
 
     violation = leak_guard.violates(text, ctx.hint_level, ctx.question)
     if violation is None:
@@ -112,7 +122,12 @@ def _llm_hint(ctx) -> tuple[str, str]:
         f"\n\n注意：你上一次的回答因「{violation.rule} {violation.detail}」不合格被拒绝。"
         "请重写并严格遵守等级限制。"
     )
-    text2 = llm_mod.llm(system=system, user=retry_user).strip()
+    try:
+        text2 = llm_mod.llm(system=system, user=retry_user).strip()
+    except Exception as exc:
+        if not llm_mod.is_expected_failure(exc):
+            raise
+        return leak_guard.fallback(ctx.hint_level, ctx.classification), "fallback"
     if leak_guard.violates(text2, ctx.hint_level, ctx.question) is None:
         return text2, "llm_retry"
 
@@ -130,28 +145,37 @@ def _success_message(ctx) -> str:
         "（例如他正确判断了边界条件、用对了哪个操作），不要只说'做得好'。"
         "不要给出任何代码。"
     )
-    text = llm_mod.llm(system=system, user=prompt).strip()
+    text = ""
+    try:
+        text = llm_mod.llm(system=system, user=prompt).strip()
+    except Exception as exc:
+        if not llm_mod.is_expected_failure(exc):
+            raise
+        return "这道题通过了测试，做得不错。"
     # 肯定语里同样不允许出现代码块（按 L1 的严格口径校验）
     if not text or leak_guard.violates(text, 1, ctx.question) is not None:
         return "这道题通过了测试，做得不错。"
     return text
 
 
-def render(ctx) -> str:
-    """按等级产出最终呈现给学生的文本。"""
+def render(ctx) -> tuple[str, str | None]:
+    """按等级产出最终呈现给学生的文本，并给出**真实生成来源**（契约 §6.2.2 的 `hint_source`）。
+
+    返回 `(文本, 来源)`；来源取值 `llm`／`llm_retry`／`fallback`；**未使用模型时为 `None`**。
+    """
     if ctx.judge_result.status == "pass":
-        return _success_message(ctx)
+        return _success_message(ctx), None
 
     if ctx.hint_level <= 0:
         # 等级 0：只给题目与判题反馈，不给教学提示。
         # 已解锁但学生没请求时，明确告知"已解锁 L?、可点请求"，而不是白给提示。
         text = _fail_feedback(ctx)
         if ctx.unlocked_level > 0:
-            return text + f"\n\n（已解锁 L{ctx.unlocked_level} 提示；点击「请求提示」查看。）"
-        return text + "\n\n（需要提示时，可以点「请求提示」。）"
+            return text + f"\n\n（已解锁 L{ctx.unlocked_level} 提示；点击「请求提示」查看。）", None
+        return text + "\n\n（需要提示时，可以点「请求提示」。）", None
 
-    hint, _source = _llm_hint(ctx)
-    return _fail_feedback(ctx) + "\n\n" + hint
+    hint, source = _llm_hint(ctx)
+    return _fail_feedback(ctx) + "\n\n" + hint, source
 
 
 class HintLadderComponent(TeachingComponent):
@@ -168,5 +192,5 @@ class HintLadderComponent(TeachingComponent):
             consecutive_fail=ctx.consecutive_fail,
             requested=ctx.request_hint,
         )
-        ctx.message = render(ctx)
+        ctx.message, ctx.hint_source = render(ctx)
         ctx.source = "harness"

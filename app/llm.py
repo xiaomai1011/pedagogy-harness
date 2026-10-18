@@ -33,6 +33,24 @@ def is_configured() -> bool:
     return all(os.environ.get(k) for k in REQUIRED)
 
 
+# **可预期**的模型故障：超时／连接／限流／服务端错误 —— 允许调用方**受控降级**（契约 §6.3 硬规则 4）。
+# 按异常**类名**判定，避免在未安装 openai 时强行导入；同时不把程序缺陷误判成"可预期"。
+_EXPECTED_FAILURE_NAMES = frozenset((
+    "APITimeoutError", "APIConnectionError", "RateLimitError", "InternalServerError",
+    "Timeout", "TimeoutError", "ConnectError", "ConnectionError", "ReadTimeout",
+    "RemoteProtocolError", "APIError",
+))
+
+
+def is_expected_failure(exc: BaseException) -> bool:
+    """判断模型故障是否**可预期**。
+
+    可预期 → 调用方可以受控降级（返回兜底提示并如实记来源）；
+    **不可预期**（代码缺陷、解析错误等）→ 必须**暴露**，不得用兜底吞掉。
+    """
+    return type(exc).__name__ in _EXPECTED_FAILURE_NAMES
+
+
 def llm(system: str, user: str, *, temperature: float = DEFAULT_TEMPERATURE,
         max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     """按 system/user 调用大模型，返回纯文本。

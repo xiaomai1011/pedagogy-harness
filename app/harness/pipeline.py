@@ -1,34 +1,75 @@
 """Harness 主干：一次提交（或一次"只看提示"）的完整处理流程。
 
-数据流：判题 → **按注册表遍历教学组件** → 返回学生 →（提交时）写日志
+**四步确定序列（契约 §6.3）—— 每一步各自"一个连接、一个短事务"**：
 
-**主干不认识任何具体组件**：它只按 `registry.ordered()` 遍历，用配置决定每个
-组件"跑还是跳过"。所以新增一个教学组件，本文件一行都不用改。
+1. **判题 → 短事务**（仅**正式提交**）：提交事实 ＋ `teaching(pending)` ＋ **执行事件终态** ＋ 回填 `submission_id`
+   （纯提示没有提交事实可原子并入 → 它的执行终态走自己的短事务）
+2. **分类／记忆 → 同一个短事务**：分类字段 ＋ 记忆计数 ＋ `progress` 标记（**`BEGIN IMMEDIATE` 内复查 `progress`**）
+3. **事务外**调用模型（分类兜底、提示生成／兜底）
+4. **收尾 → 同一个短事务**：提示事件 ＋ 提交行提示字段 ＋ `teaching` 终态
 
-**两种入口共用同一条管线**（`_run_pipeline`）：
+**前后测**（`pretest`／`posttest`，契约 §6.4）：**禁用教学帮助 ≠ 拒绝正式提交** ——
+仍然正常判题、仍然写提交行；教学记 `phase_disabled`；**不调模型、不更新记忆**；
+且**响应里任何位置**都不得出现教学诊断（连 `log` 里的 `error_class`／`error_kp` 也要剥掉）。
 
-- `handle_submission`：学生**提交代码** → 落一行 `submission_log`（推进 `submit_seq`）；
-- `handle_hint_request`：学生**只想看提示、不改代码** → **不落库**，以免把
-  "提交次数 / 首次通过率"这类指标虚增（见《技术方回执（第三回）》§五）。
+主干（本文件）只按 `registry.ordered()` 遍历组件，**不认识任何具体组件**。
 """
 
+import sqlite3
+import uuid
 from datetime import datetime
 
 from app import db
 from app import llm as llm_mod
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
+from app.harness import error_classifier as ec
+from app.harness import error_memory as em
 from app.harness import registry
 from app.harness.base import SubmissionContext
-from app.harness.config_switch import HarnessConfig
+from app.harness.config_switch import ERROR_CLASSIFIER, PRESETS, HarnessConfig
 from app.judge import judge
 from app.questions import load_question
 
-# 题库尚未补 `phase` 时的兜底（契约 §2：phase 由题库自描述）
 DEFAULT_PHASE = "practice"
+TEACHING_DISABLED_PHASES = ("pretest", "posttest")
+# 前后测**正式提交**：提交本身照常记录，只是不给教学提示
+PHASE_DISABLED_MESSAGE = "当前为前后测阶段，本阶段不提供教学提示；你的提交已正常记录。"
+# 前后测**纯提示**：这个入口**没有正式提交**，不能沿用上面那句（会误导学生）
+PHASE_DISABLED_HINT_MESSAGE = "当前为前后测阶段，本阶段不提供教学提示。"
+# 返回给学生的 `log` 里**不得出现**的教学诊断字段（口径 Q5：不能只藏前端）
+_TEACHING_DIAGNOSTIC_KEYS = ("error_class", "error_kp")
 
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _elapsed_ms(start: str, end: str) -> int:
+    try:
+        return max(0, int((datetime.fromisoformat(end) - datetime.fromisoformat(start))
+                          .total_seconds() * 1000))
+    except Exception:
+        return 0
+
+
+def _reason_text(exc: BaseException) -> str:
+    """事件表的 `reason` 只放**受控固定说明 + 异常类型名**。
+
+    **截断 `str(exc)` 不等于脱敏** —— 前 120 字符同样可能含隐藏输入、密钥或模型响应
+    内容，所以**不拼 `str(exc)`**（契约 §6.8）。
+    """
+    return f"异常类型：{type(exc).__name__}"
+
+
+def _reason_code_of(exc: BaseException) -> str:
+    """**受控错误码**：数据库错误、**已识别**的模型故障、其他内部错误**三者分开**，
+    **不得**把所有非数据库异常统一记成 `model_error`。
+    """
+    if isinstance(exc, sqlite3.Error):
+        return "db_error"
+    if llm_mod.is_expected_failure(exc):
+        return "model_error"
+    return "internal_error"
 
 
 def _recent_state(participant_id: str, question_id: str) -> tuple[int, int]:
@@ -54,136 +95,358 @@ def _recent_state(participant_id: str, question_id: str) -> tuple[int, int]:
     return consecutive, last_unlocked
 
 
-def _run_pipeline(*, participant_id: str, question_id: str, question: dict, code: str,
-                  config: HarnessConfig, request_hint: bool, ts: str,
-                  is_formal_submission: bool):
-    """判题 → 按注册表遍历组件 → 兜底。返回 `(ctx, judge_result)`，**不写日志**。
+def _phase_of(question: dict) -> str:
+    return (question or {}).get("phase", DEFAULT_PHASE)
 
-    `is_formal_submission` 按**入口**区分（D 定案，2026-10-17）：
 
-    - `True`（`/api/submit`）：本次判题**计入**一次失败 —— 连败 +1、错误记忆 +1；
-    - `False`（`/api/hint`）：会对当前代码**重新判题**，但该次执行**不计入**正式提交连败、
-      **也不更新**错误记忆，否则展示等级会越级、`count` 会被点击次数虚增。
-      —— 本函数**不做判题缓存**，两个入口各判各的（Q1 允许提示入口判题）。
+def _teaching_enabled(question: dict) -> bool:
+    return _phase_of(question) not in TEACHING_DISABLED_PHASES
 
-    **不得**用 `request_hint` 判断入口：`/api/submit` 也接受 `request_hint=true`。
+
+def _config_of(group_id: str) -> HarnessConfig:
+    """从提交行的 `group_id` 还原配置 —— 用于判断组件开关，保持既有消融语义。"""
+    return PRESETS.get(group_id) or PRESETS["exp"]
+
+
+def stage_classify_and_remember(*, request_id: str, question: dict, code: str,
+                                judge_result, ts: str):
+    """**第 2 步**（分类／记忆）。契约 §6.3 第 2 步。
+
+    顺序（关键）：
+
+    1. **事务外**完成可能**调用模型**的分类计算（模型请求不得进事务）；
+    2. 打开**显式事务**（`BEGIN IMMEDIATE`，一上来就取写锁）；
+    3. 事务内**重新检查** `progress`（不能靠"进入 `with` 就已有事务"的假设）；
+    4. 原子提交：分类字段 ＋ 记忆计数 ＋ 进度标记。
+
+    返回分类结果；若事务内复查发现已完成、或找不到教学事件 → 返回 `None`（幂等跳过）。
     """
-    consecutive_fail, last_unlocked = _recent_state(participant_id, question_id)
+    rows = db.get_events(request_id=request_id, event_type="teaching")
+    if not rows:
+        return None
+    teaching = rows[0]
+    with db.connect() as conn:
+        submission = db.get_submission_conn(conn, teaching["submission_id"])
+    enabled = _config_of(submission["group_id"]) if submission is not None else None
 
-    # 1) 判题：与运行配置无关，任何情况都要跑
-    result = judge(question, code)
+    # ---- 事务外：分类（规则未命中时可能调用模型）----
+    if enabled is not None and enabled.is_enabled(ERROR_CLASSIFIER):
+        classification = ec.classify(judge_result, code, question)
+    else:
+        classification = ec.Classification(error_class="未分类", knowledge_point="",
+                                           source="none")
 
-    # 连败计数**含本次**：**仅正式提交入口**把本次判题计入（"连续失败 2 次解锁一级"
-    # 要算上学生眼前这一次失败，契约 §5.2）。
-    # 纯提示入口会对当前代码**重新判题**（Q1 允许），但那次执行**不**计连败
-    # （否则跨门槛处会越级）。此处**没有**判题缓存，"复用判题结果"的说法不成立。
-    if is_formal_submission and result.status != "pass":
-        consecutive_fail += 1
+    # ---- 显式短事务：复查 progress → 原子写 ----
+    conn = db.connect_immediate()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        fresh = db.get_event_conn(conn, request_id, "teaching")
+        if fresh is None or fresh["progress"] == "cls_mem_done":
+            conn.execute("ROLLBACK")
+            return None
+        db.update_submission_conn(conn, fresh["submission_id"],
+                                  error_class=classification.error_class,
+                                  error_kp=classification.knowledge_point or "")
+        if (judge_result.status != "pass" and enabled is not None
+                and enabled.is_enabled(em.NAME)):
+            em.remember_conn(conn, fresh["participant_id"], classification, ts)
+        db.update_event_conn(conn, fresh["event_id"], progress="cls_mem_done")
+        conn.execute("COMMIT")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        conn.close()
+    return classification
 
-    # 2) 按注册表遍历组件：开关真正决定"跑 / 跳过"
-    ctx = SubmissionContext(
-        participant_id=participant_id,
-        question_id=question_id,
-        question=question,
-        code=code,
-        ts=ts,
-        request_hint=request_hint,
-        judge_result=result,
-        last_unlocked=last_unlocked,
-        consecutive_fail=consecutive_fail,
-        is_formal_submission=is_formal_submission,
-    )
+
+def _mark_judge_failure(exec_event_id: int, hint_event_id: int | None,
+                        exc: BaseException, ts: str) -> None:
+    """`judge` 未正常完成：执行记 `aborted`；该请求已建的提示事件收尾为 `unavailable`。"""
+    now = _now()
+    db.update_event(exec_event_id, status="aborted", ts_end=now,
+                    elapsed_ms=_elapsed_ms(ts, now),
+                    reason_code="judge_raised", reason=_reason_text(exc))
+    if hint_event_id is not None:
+        db.update_event(hint_event_id, status="unavailable", ts_end=now,
+                        elapsed_ms=_elapsed_ms(ts, now),
+                        reason_code="gen_unavailable", reason="判题未完成，未生成提示")
+
+
+def _run_components(ctx: SubmissionContext, config: HarnessConfig) -> None:
+    """按注册表遍历组件（**含模型调用，全程在事务外**）。"""
     for component in registry.ordered():
         if config.is_enabled(component.name):
             component.run(ctx)
             ctx.executed.append(component.name)
         else:
             ctx.skipped.append(component.name)
-
-    # 3) 兜底：没有任何教学组件产出反馈 → 裸大模型。
-    #    注意：`ctrl`（组件一个都不开）走到这里就是对照组；
-    #    若只开了分类器/记忆而没开提示阶梯，也会走到这里（没有呈现层）。
     if not ctx.message:
+        # 没有任何教学组件产出反馈 → 裸大模型兜底：契约 §6.2.2 要求**显式**记 raw_llm
         ctx.message = llm_mod.llm(
             system="你是编程助手，请回答学生的问题。",
-            user=f"题目：{question.get('statement','')}\n学生的代码：\n{code}\n"
-                 f"判题结果：{result.status}；报错：{result.stderr}",
+            user=f"题目：{ctx.question.get('statement', '')}\n学生的代码：\n{ctx.code}\n"
+                 f"判题结果：{ctx.judge_result.status}；报错：{ctx.judge_result.stderr}",
         )
         ctx.source = "raw_llm"
 
-    return ctx, result
+
+def _hint_event_fields(ctx: SubmissionContext, ts: str) -> dict:
+    """提示事件的终态字段：`status` 回答"有没有产出"，`hint_source` 回答"怎么产出的"。"""
+    if ctx.source == "raw_llm" and not ctx.hint_source:
+        # 裸模型路径：显式记 `raw_llm`，等级字段为 NULL（没有阶梯等级）
+        return {"status": "returned_model", "ts_end": _now(), "elapsed_ms": _elapsed_ms(ts, _now()),
+                "hint_source": "raw_llm", "hint_level": None, "unlocked_level": None,
+                "reason_code": "raw_llm_path", "reason": "未经提示阶梯，未过防泄校验"}
+    if ctx.hint_source == "fallback":
+        status = "returned_fallback"
+    elif ctx.hint_source in ("llm", "llm_retry"):
+        status = "returned_model"
+    else:
+        status = "unavailable"
+    return {"status": status, "ts_end": _now(), "elapsed_ms": _elapsed_ms(ts, _now()),
+            "hint_source": ctx.hint_source, "hint_level": ctx.hint_level,
+            "unlocked_level": ctx.unlocked_level,
+            "reason_code": "" if status != "unavailable" else "gen_unavailable",
+            "reason": "" if status != "unavailable" else "未产出可返回的提示"}
 
 
-def _response(ctx, result, *, log_payload: dict | None) -> dict:
+def _finalize(conn, *, hint_event_id: int | None, teaching_event_id: int | None,
+              ctx: SubmissionContext, teaching_on: bool, request_hint: bool, ts: str) -> None:
+    """**第 4 步**：**一个连接、一个短事务** —— 提示事件 ＋ 教学终态。
+
+    （提交行提示字段的回填由调用方在**同一个 `conn`** 里完成 → 三者不会半套提交。）
+
+    教学终态按"约定的教学步骤是否都有产出"判断：`fallback` 属**有产出**，
+    **不因模型曾失败就整体记 `failed`**（契约 §6.3 硬规则 4）。
+    """
+    if hint_event_id is not None and teaching_on:
+        db.update_event_conn(conn, hint_event_id, **_hint_event_fields(ctx, ts))
+    if teaching_event_id is not None and teaching_on:
+        produced = ((not request_hint) or ctx.source == "raw_llm" or ctx.hint_source is not None)
+        db.update_event_conn(conn, teaching_event_id,
+                             status="done" if produced else "partial",
+                             reason_code="" if produced else "gen_unavailable",
+                             reason="" if produced else "请求了提示但未产出可返回的提示",
+                             ts_end=_now(), elapsed_ms=_elapsed_ms(ts, _now()))
+
+
+def _finalize_failure(*, teaching_event_id: int | None, hint_event_id: int | None,
+                      teaching_on: bool, request_hint: bool, ts: str,
+                      exc: BaseException) -> None:
+    """异常收尾：**记录后重新抛出**（数据库／程序缺陷必须暴露，不得伪装成功）。
+
+    状态按**已完成进度**区分：第 2 步已提交（`cls_mem_done`）→ `partial`；否则 `failed`。
+    **不得**一律记成"模型错误" —— 错误码由 `_reason_code_of()` 按异常类型给出。
+    """
+    now, code, text = _now(), _reason_code_of(exc), _reason_text(exc)
+    if teaching_event_id is not None and teaching_on:
+        event = db.get_event(teaching_event_id) or {}
+        status = "partial" if event.get("progress") == "cls_mem_done" else "failed"
+        db.update_event(teaching_event_id, status=status, ts_end=now,
+                        elapsed_ms=_elapsed_ms(ts, now), reason_code=code, reason=text)
+    if request_hint and teaching_on and hint_event_id is not None:
+        db.update_event(hint_event_id, status="unavailable", ts_end=now,
+                        elapsed_ms=_elapsed_ms(ts, now),
+                        reason_code="gen_unavailable", reason=text)
+
+
+def _student_log(payload: dict | None, *, phase_disabled: bool) -> dict | None:
+    """返回给**学生**的 `log`。
+
+    前后测必须剥掉**整个结构**里的教学诊断（口径 Q5：不能只藏前端，也不能只藏顶层）。
+    """
+    if payload is None or not phase_disabled:
+        return payload
+    return {k: v for k, v in payload.items() if k not in _TEACHING_DIAGNOSTIC_KEYS}
+
+
+def _pipeline(*, participant_id: str, question_id: str, question: dict, code: str,
+              config: HarnessConfig, request_hint: bool, entry: str):
+    """两种入口共用的四步序列。返回 `(ctx, result, meta)`；前后测纯提示时 ctx／result 为 None。"""
+    ts, request_id = _now(), uuid.uuid4().hex
+    phase = _phase_of(question)
+    teaching_on = _teaching_enabled(question)
+
+    # ---- 提示事件：**受理有效请求时先建**（契约 §6.2.2），才能留下失败路径 ----
+    hint_event_id = None
+    if request_hint:
+        # `phase_disabled` 一建就是**终态** → 同时填好结束时间，避免"状态已结束、`ts_end` 为空"
+        hint_event_id = db.create_event(
+            event_type="hint", request_id=request_id, participant_id=participant_id,
+            question_id=question_id, phase=phase, entry=entry, ts_start=ts,
+            status="requested" if teaching_on else "phase_disabled", hint_source=None,
+            ts_end=None if teaching_on else ts,
+            elapsed_ms=None if teaching_on else 0,
+            reason_code="" if teaching_on else "phase_disabled",
+            reason="" if teaching_on else "前后测阶段不提供教学提示")
+
+    # ---- 前后测的**纯提示**：提前返回 —— 不调 judge、不调模型（契约 §6.4 第三行）----
+    if entry == "hint" and not teaching_on:
+        return None, None, {"request_id": request_id, "phase": phase, "ts": ts,
+                            "phase_disabled": True, "teaching_on": False, "log": None}
+
+    # ---- 执行事件：登记（`started`）----
+    exec_event_id = db.create_event(
+        event_type="execution", request_id=request_id, participant_id=participant_id,
+        question_id=question_id, phase=phase, entry=entry, ts_start=ts, status="started")
+    try:
+        result = judge(question, code)
+    except Exception as exc:
+        _mark_judge_failure(exec_event_id, hint_event_id, exc, ts)
+        raise
+    exec_final = {"status": "finished", "ts_end": _now(),
+                  "elapsed_ms": _elapsed_ms(ts, _now()), "judge_status": result.status}
+
+    # 连败计数**含本次**，但**仅正式提交入口**计入（D 定案；纯提示复用同一次判题不得再计）
+    consecutive_fail, last_unlocked = _recent_state(participant_id, question_id)
+    if entry == "submit" and result.status != "pass":
+        consecutive_fail += 1
+
+    # ---- 步骤 1 后半：TX1（仅正式提交；执行终态**并入本事务**）----
+    submission_id, teaching_event_id, classification, payload = None, None, None, None
+    if entry == "submit":
+        # 前后测只用**规则**做内部记录（不调模型）；练习阶段留给第 2 步回填
+        classification = None if teaching_on else ec.classify_rule_only(result, code, question)
+        payload = {
+            "ts": ts, "participant_id": participant_id, "group_id": config.group_id,
+            "question_id": question_id, "phase": phase,
+            "submit_seq": db.next_submit_seq(participant_id, question_id),
+            "status": result.status, "error_type": result.error_type,
+            "error_class": getattr(classification, "error_class", "未分类"),
+            "error_kp": getattr(classification, "knowledge_point", "") or "",
+            "hint_level": 0, "hint_unlocked_level": 0,
+            "hint_requested": 1 if request_hint else 0,
+            "pass_status": 1 if result.status == "pass" else 0,
+            "elapsed_ms": result.exec_ms,
+        }
+        with db.connect() as conn:
+            submission_id = db.log_submission_conn(conn, **payload)
+            teaching_event_id = db.create_event_conn(
+                conn, event_type="teaching", request_id=request_id,
+                participant_id=participant_id, question_id=question_id, phase=phase,
+                entry=entry, ts_start=ts, submission_id=submission_id,
+                status="pending" if teaching_on else "phase_disabled", progress="",
+                ts_end=None if teaching_on else ts,
+                elapsed_ms=None if teaching_on else 0,
+                reason_code="" if teaching_on else "phase_disabled",
+                reason="" if teaching_on else "前后测阶段禁用教学处理")
+            # 执行终态**并入同一事务**（契约 §6.3 第 1 步），不再提前单独提交
+            db.update_event_conn(conn, exec_event_id, submission_id=submission_id, **exec_final)
+            # 关联回填：**提示事件也要回填** `submission_id`（契约 §6.5）
+            if hint_event_id is not None:
+                db.update_event_conn(conn, hint_event_id, submission_id=submission_id)
+    else:
+        # 纯提示：没有提交事实可原子并入 → 执行终态走自己的短事务
+        db.update_event(exec_event_id, **exec_final)
+
+    # ---- 步骤 2 / 3 / 4（异常时统一走失败收尾）----
+    ctx = SubmissionContext(
+        participant_id=participant_id, question_id=question_id, question=question,
+        code=code, ts=ts, request_hint=request_hint, judge_result=result,
+        last_unlocked=last_unlocked, consecutive_fail=consecutive_fail,
+        is_formal_submission=(entry == "submit"), classification=classification,
+    )
+    meta = {"request_id": request_id, "phase": phase, "ts": ts,
+            "phase_disabled": not teaching_on, "teaching_on": teaching_on,
+            "submission_id": submission_id, "teaching_event_id": teaching_event_id,
+            "log": None}
+    try:
+        if entry == "submit" and teaching_on:
+            got = stage_classify_and_remember(request_id=request_id, question=question,
+                                              code=code, judge_result=result, ts=ts)
+            # 罕见：重复进入导致跳过 → 仍给出分类供呈现层使用
+            ctx.classification = got if got is not None else ec.classify_rule_only(
+                result, code, question)
+            if ctx.classification is not None:
+                payload = dict(payload, error_class=ctx.classification.error_class,
+                               error_kp=ctx.classification.knowledge_point or "")
+
+        if teaching_on:
+            _run_components(ctx, config)
+        else:
+            # 前后测：**不跑任何教学组件、不调模型**；只给阶段说明（也不暴露教学诊断）
+            ctx.skipped = [c.name for c in registry.ordered()]
+            ctx.source = "phase_disabled"
+            ctx.message = (PHASE_DISABLED_HINT_MESSAGE if entry == "hint"
+                           else PHASE_DISABLED_MESSAGE)
+
+        # ---- 步骤 4：**一个连接、一个短事务** ----
+        with db.connect() as conn:
+            _finalize(conn, hint_event_id=hint_event_id,
+                      teaching_event_id=teaching_event_id, ctx=ctx,
+                      teaching_on=teaching_on, request_hint=request_hint, ts=ts)
+            if entry == "submit" and teaching_on:
+                db.update_submission_conn(conn, submission_id, hint_level=ctx.hint_level,
+                                          hint_unlocked_level=ctx.unlocked_level)
+        if entry == "submit" and teaching_on and payload is not None:
+            payload = dict(payload, hint_level=ctx.hint_level,
+                           hint_unlocked_level=ctx.unlocked_level)
+    except Exception as exc:
+        _finalize_failure(teaching_event_id=teaching_event_id, hint_event_id=hint_event_id,
+                          teaching_on=teaching_on, request_hint=request_hint, ts=ts, exc=exc)
+        raise
+    meta["log"] = payload
+    return ctx, result, meta
+
+
+def _response(ctx, result, *, log_payload: dict | None, meta: dict | None = None) -> dict:
     """两种入口共用的返回结构。`log_payload` 为 `None` 表示本次**没写库**。"""
+    phase_disabled = bool((meta or {}).get("phase_disabled"))
     return {
-        "status": result.status,
-        "failed_cases": result.failed_cases,
-        "stderr": result.stderr,
-        "error_class": getattr(ctx.classification, "error_class", "未分类"),
-        "knowledge_point": getattr(ctx.classification, "knowledge_point", ""),
+        "status": result.status if result is not None else "phase_disabled",
+        "failed_cases": result.failed_cases if result is not None else [],
+        "stderr": result.stderr if result is not None else "",
+        # 前后测**不只藏顶层**：`log` 里的教学诊断同样要剥掉（口径 Q5）
+        "error_class": "" if phase_disabled else getattr(ctx.classification, "error_class", "未分类"),
+        "knowledge_point": "" if phase_disabled else getattr(ctx.classification, "knowledge_point", ""),
         "hint_level": ctx.hint_level,
         "unlocked_level": ctx.unlocked_level,
         "hint_requested": 1 if ctx.request_hint else 0,
-        "memory_hint": ctx.memory_hint,
+        "memory_hint": "" if phase_disabled else ctx.memory_hint,
         "message": ctx.message,
         "source": ctx.source,
-        # 组件执行轨迹：便于演示与排查"哪个组件被跳过了"
         "components": {"executed": ctx.executed, "skipped": ctx.skipped},
-        "log": log_payload,
+        "log": _student_log(log_payload, phase_disabled=phase_disabled),
+    }
+
+
+def _disabled_response(*, hint_requested: bool) -> dict:
+    """前后测**纯提示**的提前返回：不判题、不调模型、不给教学提示。"""
+    return {
+        "status": "phase_disabled", "failed_cases": [], "stderr": "",
+        "error_class": "", "knowledge_point": "",
+        "hint_level": 0, "unlocked_level": 0,
+        "hint_requested": 1 if hint_requested else 0,
+        "memory_hint": "", "message": PHASE_DISABLED_HINT_MESSAGE, "source": "phase_disabled",
+        "components": {"executed": [], "skipped": []}, "log": None,
     }
 
 
 def handle_submission(*, participant_id: str, question_id: str, code: str,
                       config: HarnessConfig, request_hint: bool = False) -> dict:
-    """学生**提交代码**：判题 + 教学反馈 + **落一行 `submission_log`**。"""
-    ts = _now()
+    """学生**提交代码**：判题 ＋ 教学反馈 ＋ 落一行 `submission_log`（四步序列，契约 §6.3）。"""
     question = load_question(question_id)
-    ctx, result = _run_pipeline(
+    ctx, result, meta = _pipeline(
         participant_id=participant_id, question_id=question_id, question=question,
-        code=code, config=config, request_hint=request_hint, ts=ts,
-        is_formal_submission=True,
-    )
-
-    # 4) 日志埋点（不得事后补录）。
-    #    `phase` 由题库元数据自描述、**前端不传**（防篡改）。
-    payload = {
-        "ts": ts,
-        "participant_id": participant_id,
-        "group_id": config.group_id,
-        "question_id": question_id,
-        "phase": question.get("phase", DEFAULT_PHASE),
-        "submit_seq": db.next_submit_seq(participant_id, question_id),
-        "status": result.status,
-        "error_type": result.error_type,
-        "error_class": getattr(ctx.classification, "error_class", "未分类"),
-        "error_kp": getattr(ctx.classification, "knowledge_point", ""),
-        "hint_level": ctx.hint_level,
-        "hint_unlocked_level": ctx.unlocked_level,
-        "hint_requested": 1 if request_hint else 0,
-        "pass_status": 1 if result.status == "pass" else 0,
-        "elapsed_ms": result.exec_ms,
-    }
-    db.log_submission(**payload)
-
-    return _response(ctx, result, log_payload=payload)
+        code=code, config=config, request_hint=request_hint, entry="submit")
+    return _response(ctx, result, log_payload=meta.get("log"), meta=meta)
 
 
 def handle_hint_request(*, participant_id: str, question_id: str, code: str,
                         config: HarnessConfig) -> dict:
-    """学生**只想看提示、代码没改**：同样过判题 + 全套教学组件 + 防泄校验。
+    """学生**只想看提示、代码没改**：同样走判题 ＋ 教学组件 ＋ 防泄校验。
 
-    **但不写 `submission_log`**（返回里 `log` 恒为 `None`），
-    以免把"提交次数 / 首次通过率"这类申报书指标虚增。
-
-    同时按入口置 `is_formal_submission=False`：本次判题**不**计入连败、
-    **不**写错误记忆（否则提示等级会越级、`count` 会被点击次数虚增）。
+    **不写 `submission_log`**（`log` 恒为 `None`），也**不产生 `teaching` 事件**（契约 §6.5）；
+    前后测阶段**提前返回、不调 judge、不调模型**（契约 §6.4）。
     """
-    ts = _now()
     question = load_question(question_id)
-    ctx, result = _run_pipeline(
+    ctx, result, meta = _pipeline(
         participant_id=participant_id, question_id=question_id, question=question,
-        code=code, config=config, request_hint=True, ts=ts,
-        is_formal_submission=False,
-    )
-    return _response(ctx, result, log_payload=None)
+        code=code, config=config, request_hint=True, entry="hint")
+    if ctx is None:
+        return _disabled_response(hint_requested=True)
+    return _response(ctx, result, log_payload=None, meta=meta)

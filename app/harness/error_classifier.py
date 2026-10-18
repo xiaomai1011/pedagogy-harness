@@ -154,6 +154,20 @@ def classify(judge_result, code: str, question: dict) -> Classification:
     return _llm_classify(judge_result, code, question)
 
 
+def classify_rule_only(judge_result, code: str, question: dict) -> Classification:
+    """**只走规则**，绝不调用模型 —— 供**前后测**做内部记录用（口径 Q5）。
+
+    规则未命中 → 「未分类」。这样前后测既能留下确定性分类用于测量，
+    又满足"不调模型"的硬约束。
+    """
+    error_class = match_rule(judge_result, code)
+    if error_class is None:
+        return Classification(error_class="未分类", knowledge_point="", source="none")
+    return Classification(error_class=error_class,
+                          knowledge_point=_guess_knowledge_point(error_class, question),
+                          source="rule")
+
+
 class ErrorClassifierComponent(TeachingComponent):
     """把 classify() 包成可插拔组件。"""
 
@@ -161,4 +175,8 @@ class ErrorClassifierComponent(TeachingComponent):
     order = 10
 
     def run(self, ctx) -> None:
+        # 第 2 步（数据记录层）已经算过分类并写进 `ctx.classification` → **不再重复算**，
+        # 避免规则未命中时**再花一次模型调用**。
+        if ctx.classification is not None:
+            return
         ctx.classification = classify(ctx.judge_result, ctx.code, ctx.question)

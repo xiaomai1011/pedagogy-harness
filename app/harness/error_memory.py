@@ -17,6 +17,9 @@ from app.harness.error_classifier import Classification
 MIN_COUNT = 2
 MAX_ITEMS = 2
 
+# 组件名（与注册表、配置开关一致；第 2 步也要按它判断"记忆是否启用"）
+NAME = "error_memory"
+
 
 def _safe_classification(classification) -> Classification:
     """分类器被开关关闭时 ctx.classification 会是 None。
@@ -29,20 +32,23 @@ def _safe_classification(classification) -> Classification:
     return Classification(error_class="未分类", knowledge_point="", source="none")
 
 
-def remember(participant_id: str, classification, ts: str) -> None:
-    """把一次错误计入记忆表。仅当开关 error_memory 开启时调用。
+def remember_conn(conn, participant_id: str, classification, ts: str) -> None:
+    """**用调用方的连接**记账 —— 与分类回填、进度标记放进**同一个短事务**（契约 §6.3 第 2 步）。
 
-    「未分类」不记账：否则记忆里会堆一串无意义的「未分类/」，
-    既污染统计，也让预防性提示变成一句废话。
+    「未分类」不记账：否则记忆里会堆一串无意义的「未分类/」，既污染统计，
+    也让预防性提示变成一句废话。
     """
+    classification = _safe_classification(classification)
     if getattr(classification, "error_class", "未分类") == "未分类":
         return
-    db.bump_error_memory(
-        participant_id,
-        classification.error_class,
-        getattr(classification, "knowledge_point", "") or "",
-        ts,
-    )
+    db.upsert_error_memory_conn(conn, participant_id, classification.error_class,
+                               getattr(classification, "knowledge_point", "") or "", ts)
+
+
+def remember(participant_id: str, classification, ts: str) -> None:
+    """把一次错误计入记忆表（自管连接的便利包装；主流程请走 `remember_conn`）。"""
+    with db.connect() as conn:
+        remember_conn(conn, participant_id, classification, ts)
 
 
 def preventive_hint(participant_id: str) -> str:
@@ -61,14 +67,10 @@ def preventive_hint(participant_id: str) -> str:
 class ErrorMemoryComponent(TeachingComponent):
     """把 remember() / preventive_hint() 包成可插拔组件。"""
 
-    name = "error_memory"
+    name = NAME
     order = 20
 
     def run(self, ctx) -> None:
-        classification = _safe_classification(ctx.classification)
-        # 只有**正式提交**入口才把这次判题记成一次错误（D 定案，2026-10-17）。
-        # 纯提示请求（`/api/hint`）会对当前代码**重新判题**，但那次执行**不**写记忆；
-        # 若也记账，"同类错误是否减少"的结论就会被点击次数污染（实测 1→4）。
-        if ctx.is_formal_submission and ctx.judge_result.status != "pass":
-            remember(ctx.participant_id, classification, ctx.ts)
+        # **不在这里记账**：错误记忆的计数已上移到**第 2 步**（数据记录层，契约 §6.3），
+        # 本组件只负责**读取**历史并产出预防性提示 —— 否则会与第 2 步重复计数。
         ctx.memory_hint = preventive_hint(ctx.participant_id)

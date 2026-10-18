@@ -41,6 +41,7 @@ class SubmissionContext:
     unlocked_level: int = 0      # 提示阶梯**已解锁**的等级上限（口径②：解锁 ≠ 展示）
     message: str = ""            # 最终呈现给学生的反馈
     source: str = "harness"      # harness = 走了教学组件；raw_llm = 裸大模型
+    hint_source: str | None = None  # 提示的**真实生成路径**：llm / llm_retry / fallback；未产出为 None
 
     # ---- 执行轨迹：谁跑了、谁被开关跳过 ----
     executed: list[str] = field(default_factory=list)
