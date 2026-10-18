@@ -89,6 +89,30 @@ _EVENT_COLUMNS = (
     "reason_code", "reason",
 )
 
+# G-② 第 5 项：**独立结构化运行记录**（G-① §3.5 方案 B）。
+# 为什么单独一张表而不是塞进 event_log：`UNIQUE(request_id, event_type)` 意味着
+# 同一请求只能有一条同类事件，而「隔离不可用」与「清理失败」都可能与判题结果**分开**
+# 发生、且清理失败可能一请求多条（每用例一条）。清理失败**不得改写判题结果**，
+# 所以也不该复用 execution 事件的 `reason_code` 字段。
+# 字段刻意保持最小：只有**稳定执行标识**（run_id）、**请求关联**（request_id）、
+# **受控码**（detail_code）与时间 —— **不存**异常全文、隐藏用例输入、密钥、模型原始响应。
+# ⚠️ 字段与消费方仍待负责人裁定（G-③ 第 5 项），本表属骨架。
+ISOLATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS isolation_run_log (
+    run_id      TEXT    NOT NULL,
+    request_id  TEXT    NOT NULL,
+    case_index  INTEGER,
+    phase       TEXT    NOT NULL DEFAULT '',
+    event       TEXT    NOT NULL,
+    detail_code TEXT    NOT NULL DEFAULT '',
+    ts          TEXT    NOT NULL,
+    PRIMARY KEY (run_id, event)
+);
+CREATE INDEX IF NOT EXISTS idx_isolation_request ON isolation_run_log(request_id);
+"""
+
+_ISOLATION_COLUMNS = ("run_id", "request_id", "case_index", "phase", "event", "detail_code", "ts")
+
 _initialized = False
 
 
@@ -113,6 +137,7 @@ def connect() -> sqlite3.Connection:
         conn.execute(LOG_SCHEMA)
         conn.execute(MEMORY_SCHEMA)
         conn.executescript(EVENT_SCHEMA)
+        conn.executescript(ISOLATION_SCHEMA)
         _ensure_columns(conn)
         conn.commit()
         _initialized = True
@@ -276,3 +301,47 @@ def get_error_memory(participant_id: str) -> list[dict]:
             (participant_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ------------------------------------------------ G-② 独立结构化运行记录（§3.5 方案 B）
+
+def log_isolation_run_conn(conn: sqlite3.Connection, **payload) -> None:
+    """**用调用方的连接**写一条运行记录（与判题事务解耦时用 `log_isolation_run`）。"""
+    cols = [c for c in _ISOLATION_COLUMNS if c in payload]
+    conn.execute(
+        f"INSERT OR REPLACE INTO isolation_run_log ({', '.join(cols)}) "
+        f"VALUES ({', '.join('?' * len(cols))})",
+        tuple(payload[c] for c in cols),
+    )
+
+
+def log_isolation_run(**payload) -> None:
+    """写一条独立运行记录（隔离不可用／清理失败）。
+
+    **必须显式 `close()`**：`with connect() as conn:` 只提交／回滚，**不关连接**；
+    Python 3.13 起未关闭的 `sqlite3.Connection` 不再在回收时自动关闭，
+    Windows 下残留的文件句柄会让调用方随后删不掉临时库所在目录。
+    """
+    conn = connect()
+    try:
+        log_isolation_run_conn(conn, **payload)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_isolation_runs(*, request_id: str | None = None, run_id: str | None = None,
+                       event: str | None = None) -> list[dict]:
+    """按请求／执行标识／事件名读运行记录（隔离验收入口与运维排查的消费方）。"""
+    where, args = [], []
+    for col, val in (("request_id", request_id), ("run_id", run_id), ("event", event)):
+        if val is not None:
+            where.append(f"{col}=?")
+            args.append(val)
+    sql = "SELECT * FROM isolation_run_log" + (f" WHERE {' AND '.join(where)}" if where else "")
+    sql += " ORDER BY ts, rowid"
+    conn = connect()
+    try:
+        return [dict(r) for r in conn.execute(sql, tuple(args)).fetchall()]
+    finally:
+        conn.close()

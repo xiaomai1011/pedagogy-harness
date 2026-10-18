@@ -24,6 +24,7 @@ from app import llm as llm_mod
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
 from app.harness import error_classifier as ec
 from app.harness import error_memory as em
+from app.harness import isolation
 from app.harness import redaction
 from app.harness import registry
 from app.harness.base import SubmissionContext
@@ -59,7 +60,7 @@ def _reason_text(exc: BaseException) -> str:
     **截断 `str(exc)` 不等于脱敏** —— 前 120 字符同样可能含隐藏输入、密钥或模型响应
     内容，所以**不拼 `str(exc)`**（契约 §6.8）。
     """
-    return f"异常类型：{type(exc).__name__}"
+    return isolation.reason_text(exc)
 
 
 def _reason_code_of(exc: BaseException) -> str:
@@ -166,15 +167,52 @@ def stage_classify_and_remember(*, request_id: str, question: dict, code: str,
 
 def _mark_judge_failure(exec_event_id: int, hint_event_id: int | None,
                         exc: BaseException, ts: str) -> None:
-    """`judge` 未正常完成：执行记 `aborted`；该请求已建的提示事件收尾为 `unavailable`。"""
+    """`judge` 未正常完成：执行记 `aborted`；该请求已建的提示事件收尾为 `unavailable`。
+
+    **隔离不可用必须与「判题器自己抛异常」分开记**（G-② §3.8）：
+
+    - 抛 `isolation.IsolationUnavailable` ⇒ `reason_code="isolation_unavailable"`
+      （**拒绝执行**，机制未就绪）；
+    - 其他异常 ⇒ 仍记 `judge_raised`（既有语义，`RuntimeError` 等不得被误判）。
+
+    两类**都不是**「判题器正常返回 `status="error"`」——后者走 `finished` 路径。
+    同时落一条**独立结构化运行记录**（G-① §3.5 方案 B），**不改写判题结果**。
+    """
     now = _now()
+    code = isolation.reason_code_of(exc)
     db.update_event(exec_event_id, status="aborted", ts_end=now,
                     elapsed_ms=_elapsed_ms(ts, now),
-                    reason_code="judge_raised", reason=_reason_text(exc))
+                    reason_code=code, reason=_reason_text(exc))
+    if isinstance(exc, isolation.IsolationUnavailable):
+        _record_isolation_unavailable(exec_event_id, exc, ts)
     if hint_event_id is not None:
         db.update_event(hint_event_id, status="unavailable", ts_end=now,
                         elapsed_ms=_elapsed_ms(ts, now),
                         reason_code="gen_unavailable", reason="判题未完成，未生成提示")
+
+
+def _record_isolation_unavailable(exec_event_id: int, exc, ts: str) -> None:
+    """写「隔离不可用」运行记录。
+
+    **失败不得改变判题事实，但也不得静默**：`reason_code` 已记进 execution 事件，
+    运行记录只是附加的可关联证据，因此这里**不重抛**（否则会把「隔离不可用」
+    变成「运行记录写失败」）；失败时改为在宿主侧输出**受控诊断码**
+    `record_write_failed`（`isolation.warn()`，固定文案、不接受自由文本），
+    使失败**可被运维看见**而不产生新的泄露通道。
+    """
+    try:
+        exec_event = db.get_event(exec_event_id) or {}
+        isolation.record_run_event(
+            request_id=exec_event.get("request_id") or "",
+            phase=exec_event.get("phase") or "",
+            event=isolation.RUN_EVENT_ISOLATION_UNAVAILABLE,
+            detail_code=isolation.normalize_detail_code(getattr(exc, "detail_code", "not_ready")),
+            ts=ts,
+        )
+    except Exception:
+        # 不重抛、不改判题结果；但**必须可见**（G-③ 第 5 项：降级标记 record_write_failed）
+        isolation.warn("record_write_failed")
+        return
 
 
 def _run_components(ctx: SubmissionContext, config: HarnessConfig) -> None:

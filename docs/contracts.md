@@ -412,10 +412,65 @@ CREATE INDEX IF NOT EXISTS idx_event_type_ts    ON event_log(event_type, ts_star
 
 | 事件 | 码 |
 |---|---|
-| `execution` | `judge_raised`／`db_error`／`process_exit` |
+| `execution` | `judge_raised`／**`isolation_unavailable`**／`db_error`／`process_exit` |
 | `hint` | `phase_disabled`／`gen_unavailable`／`model_error`／`raw_llm_path` |
 | `teaching` | `phase_disabled`／`model_error`／`db_error`／`component_skipped` |
 | 通用 | `''`（正常，无异常）／**`internal_error`**（**未识别**的内部错误 —— `db_error` 与已识别的模型故障之外的异常，**不得**一律记成 `model_error`） |
+
+**2026-10-18 新增 `isolation_unavailable`（G-② 第 5 项，按本节「扩展须登记」办理）**：
+
+- **语义**：`judge()` 因**隔离设施不可用而拒绝执行**时抛出约定异常
+  （`app.harness.isolation.IsolationUnavailable`），管线据此记
+  `execution.status='aborted'` ＋ `reason_code='isolation_unavailable'`。
+- **与相邻情形的区别（不得混记）**：
+
+  | 情形 | 表达方式 | 事件终态 |
+  |---|---|---|
+  | 隔离不可用（**拒绝执行**） | **抛** `IsolationUnavailable` | `aborted` ＋ `isolation_unavailable` |
+  | 判题器自身故障（**正常返回**） | `JudgeResult(status='error')` | `finished` ＋ `judge_status='error'` |
+  | 其他异常 | 抛任意异常 | `aborted` ＋ `judge_raised` |
+
+- **`hint` 侧不新增码**：同一请求若已建提示事件，仍按既有 `gen_unavailable` 收尾为
+  `unavailable`（**有意选择**，避免与既有语义重复）。
+- **`cleanup_failed` 仍未登记为 `reason_code`**：清理失败**不改写判题结果**，其**传播通道未定**
+  （G-① §3.5，优先评估独立结构化运行记录），通道与消费方定案前**不得**写「已实现清理失败记录」。
+  ⚠️ 名字本身已占用：`app/harness/isolation.py` 的 `CLEANUP_FAILED` 与
+  `RUN_EVENT_CLEANUP_FAILED` 指的是**独立运行记录的事件名**（`isolation_run_log.event`），
+  **不是** `event_log.reason_code` 的取值 —— 两者**不得混用**，`cleanup_failed` 现阶段
+  **不得**写进任何 `event_log.reason_code`。
+
+**宿主侧诊断码（`record_write_failed`，2026-10-18 登记）**：
+
+- **用途**：「尽力而为路径」失败时**必须可见、但不得改写判题结果**的降级标记。
+  典型场合：`_record_isolation_unavailable()` 写 `isolation_run_log` 失败 ——
+  运行记录只是附加的可关联证据，**不重抛**（否则会把「隔离不可用」变成「运行记录写失败」），
+  改为在宿主侧输出该受控码（`isolation.warn()`）。
+- **输出通道与形态**：**进程级 stderr**，形态 `[harness][<码>] <固定文案>`；
+  **固定文案、不接受任何自由文本**（异常原文、用例输入、密钥、模型原始响应都进不来）；
+  未知码归一为 `unregistered_warn`，**不原样输出**。
+- **与 `detail_code` 的区别**：`detail_code` 落库（`isolation_run_log.detail_code`），
+  本码**不落库**（它标记的正是「落库失败」）。二者**同名但不同通道**，
+  各自的登记集合分别是 `DETAIL_CODES` 与 `WARN_CODES`。
+- ⚠️ **`warn()` 不是「清理失败通道已解决」**：它只是让写入失败**不静默**；
+  `cleanup_failed` 的传播通道与消费方**仍未定案**。
+
+**独立结构化运行记录（骨架，字段与消费方仍待负责人裁定）**：
+`app/db.py` 新增 `isolation_run_log` 表（`run_id`／`request_id`／`case_index`／`phase`／`event`／`detail_code`／`ts`），
+用于记录**与判题结果分开**的隔离／清理事实。它**不写进** `event_log`：后者有
+`UNIQUE(request_id, event_type)`，同一请求只能有一条同类事件，而清理失败可能每用例一条。
+该表只存**受控码 ＋ 关联标识**，**严禁**异常全文、隐藏用例输入、密钥、模型原始响应（§6.8）。
+
+**`detail_code` 是受控码，不是自由文本（2026-10-18 登记）**：
+
+- **有限登记集合**：只允许 `app/harness/isolation.py` 的 `DETAIL_CODES` 内取值
+  （`not_ready`／`hyperv_disabled`／`vm_missing`／`agent_unreachable`／`channel_unavailable`／
+  `scope_not_ready`／`constraint_not_applied`／`rm_failed`／`rm_timeout`／`rm_denied`／
+  `record_write_failed`）；**新增码须按本节「扩展须登记」一并登记**。
+- **未知值一律归一为 `unregistered_detail`**（`UNREGISTERED_DETAIL_CODE`），
+  **绝不原样入库、绝不进 `reason`**。空值／空白归一为 `''`。
+- **口径**：只保证「不拼 `str(exc)`」是**不够**的 —— 换一个字段承载任意字符串照样会泄露。
+  因此 `detail_code`、`event`、`reason_code` 三者**都必须是有限集合**，
+  自由文本（异常原文、用例输入、密钥、模型原始响应）**不得**经由任何字段落库。
 
 ### 6.3 事务顺序（**四步确定序列**，不得只留"原则"）
 
