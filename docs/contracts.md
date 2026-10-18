@@ -18,6 +18,14 @@
 >   "**仅**正式提交入口计连败 / 写错误记忆"的记账口径（对应待办 D 的修复，提交 `8c641bc`）。
 > - **本次未改动任何字段与表结构**：`§1` 判题 I/O 的 `error_type` / `stderr` **红线未动**，
 >   `§3` 日志 16 列 schema 与 `§5.1` 组件基座均**未动**。
+>
+> **2026-10-18（第三次修订，经岗位 1 确认）**
+> - **新增 `§6` 事件表 `event_log`**：一张关联表承载 **执行／提示／教学处理** 三类事件，含状态机（§6.2）、
+>   **四步确定事务顺序**（§6.3）、**前后测三入口行为**（§6.4）、**纯提示分支与判题异常收尾**（§6.5）、
+>   计数口径（§6.7：四类数字分开表述）、旧库兼容与唯一性（§6.8）、保留与删除（§6.9）、Q6 登记（§6.10）。
+> - **未动项**：`§1` `error_type`／`stderr` 红线、`§3` 16 列语义、`§4` 错误记忆表结构、`§5.1` 组件基座、
+>   **岗位③判题器接口** —— 本表**只新增**，上述各项**一个字未改**。
+> - 依据：待办 **Q1／C／I**；审议过程留档见 `docs/事件表契约草案.md`（已注明被本 §6 取代）。
 
 ---
 
@@ -292,3 +300,211 @@
 人格组件被关闭时，提示阶梯退回自带兜底提示词 `DEFAULT_PERSONA`。
 
 > **申报书未提及人格**——此项属团队新增的实现点，**不作为新增创新点**。
+
+---
+
+## 6. 事件表 `event_log`（关联事件日志，2026-10-18 新增）
+
+> **为什么加**：`§3` 的 `submission_log` 只记**正式提交**；"判题执行留痕（Q1）""提示事件（C）"
+> "教学处理状态（I）"三件事原先**无处可记**（`/api/hint` 不写任何日志、模型异常时对不上账）。
+> **一张关联表承载三类事件**，用 `event_type` 区分；**不做**通用事件平台。
+> **本表是"默认值不等于成功"这套设计的解药**：读日志者先看状态，再看默认值。
+
+### 6.1 表结构
+
+```sql
+CREATE TABLE IF NOT EXISTS event_log (
+    event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type     TEXT    NOT NULL,            -- execution / hint / teaching
+    request_id     TEXT    NOT NULL,            -- 同一请求共用；服务端 uuid4 生成
+    submission_id  INTEGER,                     -- = submission_log.id；**可后回填**；纯提示为 NULL
+    participant_id TEXT    NOT NULL,
+    question_id    TEXT    NOT NULL,
+    phase          TEXT    NOT NULL DEFAULT 'practice',
+    entry          TEXT    NOT NULL DEFAULT '', -- 来源入口：submit / hint
+    ts_start       TEXT    NOT NULL,            -- 事件**原始开始时间**（受理／登记时刻）
+    ts_end         TEXT,                        -- 未结束为 NULL
+    elapsed_ms     INTEGER,                     -- 未结束为 NULL
+    status         TEXT    NOT NULL,            -- **各类型各自定义**，见 §6.2
+    progress       TEXT    NOT NULL DEFAULT '', -- teaching 专用进度标记：'' / cls_mem_done
+    hint_level     INTEGER,                     -- 本次**生成/准备返回**的等级（**不是**已展示/已阅读）
+    unlocked_level INTEGER,                     -- **状态计算完成后**的解锁上限（含首次请求的 L1 保底）
+    hint_source    TEXT,                        -- llm / llm_retry / fallback / raw_llm；**无产出为 NULL**
+    judge_status   TEXT,                        -- execution 专用：pass/fail/timeout/crash/error
+    reason_code    TEXT    NOT NULL DEFAULT '', -- **受控错误码**（见 §6.2.4）
+    reason         TEXT    NOT NULL DEFAULT '', -- **脱敏**说明；严禁异常全文/隐藏输入/密钥/模型原始响应
+    UNIQUE (request_id, event_type)             -- 同一请求内**每类事件只落一条**
+);
+CREATE INDEX IF NOT EXISTS idx_event_request    ON event_log(request_id);
+CREATE INDEX IF NOT EXISTS idx_event_submission ON event_log(submission_id);
+CREATE INDEX IF NOT EXISTS idx_event_type_ts    ON event_log(event_type, ts_start);
+```
+
+用**显式列**而非 JSON `payload`：本表要支撑申报书统计（三个计数、等级分布、生成路径分布），
+显式列可直接 `GROUP BY`。各类型不适用的列留 **`NULL`**（`NULL`＝不适用，`''`＝确认即空）。
+`UNIQUE(request_id, event_type)` **只**保证同一请求内不重复落事件；**客户端重发幂等不在本轮范围**。
+
+### 6.2 三类事件的状态（**不得混用**）
+
+#### 6.2.1 `execution`（写入方：**管线调用 `judge` 的边界**）
+
+| 字段 | 取值 |
+|---|---|
+| `status` | `started`（**已登记执行尝试，尚无终态**）／`finished`（`judge` 已返回结果）／`aborted`（**程序自己捕获到异常并成功记录**） |
+| `judge_status` | `finished` 时填入 `pass`／`fail`／`timeout`／`crash`／`error` |
+| `entry` | `submit`／`hint` |
+
+写入时机：**仅在"实际准备调用 `judge`"时**写 `started`；`judge` 返回后**更新同一行**为 `finished`
+（补 `ts_end`／`elapsed_ms`／`judge_status`）；管线捕获异常时更新为 `aborted`。
+**参数校验失败、前后测禁用**等**提前拒绝**的请求**不写**执行事件。
+
+> **语义限定**：遗留停在 `started` 的行＝**"结果未知／未记录到完成"**（**进程退出**、**终态回写失败**等都可能造成），
+> **不能**一律判成中途被杀，**也**不能假定进程被杀后还能自己补写 `aborted`；`judge` **正常返回**的 `timeout`／`crash`／`error`
+> 属**判题结果**，**不等于**管线 `aborted`。**不改岗位③判题器接口**。
+
+#### 6.2.2 `hint`（写入方：提示层／管线）
+
+| 字段 | 取值 |
+|---|---|
+| `status` | `requested`（**处理中**）／`returned_model`（**正常返回模型提示**）／`returned_fallback`（**降级返回兜底提示**）／`unavailable`（**未能返回提示**）／`phase_disabled` |
+| `hint_source` | `llm`／`llm_retry`／`fallback`／`raw_llm`；**无产出时为 `NULL`** |
+
+**写入时机：受理有效提示请求时先创建 `requested`，处理完成后更新同一行** ——
+这样才留得下"已请求但判题抛异常／模型期间进程退出／还没走到写日志处"这些路径。
+覆盖**两个入口**：`/api/hint` 与 `/api/submit(request_hint=True)`；后者**仍只有一条提交、一次判题、一条提示事件**。
+
+> **两个正交维度**：`status` 回答**"有没有产出"**，`hint_source` 回答**"怎么产出的"**。
+> 因此 `fallback` 是 `status='returned_fallback'`（**有产出，但降级**），**不是**"生成失败"。
+> **裸模型路径**（提示阶梯未启用，如 `ctrl` 内部演示）：`hint_source='raw_llm'`、
+> `hint_level`／`unlocked_level` 为 **NULL**、`reason_code='raw_llm_path'`；**不得**记成 `llm`
+> （避免暗示它通过了 `§5.3` 校验）。**没有学生提示请求时不凭空创建提示事件。**
+> 等级字段口径＝**生成／准备返回**：后端成功返回 ≠ 浏览器已渲染 ≠ 学生已阅读；**本轮不新增前端确认机制**。
+
+#### 6.2.3 `teaching`（写入方：管线）
+
+| `status` | 取值 |
+|---|---|
+| `pending` | 判题事实已落库，教学未跑完 |
+| `done` | **本请求按阶段与配置应执行的教学步骤均已完成** |
+| `partial` | 部分步骤完成（须写明哪几步） |
+| `failed` | 教学未成功（`reason_code` 记具体原因） |
+| `phase_disabled` | 前后测**按阶段策略禁用**教学 |
+
+**`phase_disabled` 口径**：不调模型、不更新错误记忆、不向学生返回教学提示；
+它是**正常阶段策略，不是失败**，也**不得**记成 `done`。
+若该阶段内部仍做**确定性分类**用于测量，须单独说明其意义（只进内部统计，**不构成教学诊断**）。
+
+#### 6.2.4 `reason_code` 受控码表（扩展须登记）
+
+| 事件 | 码 |
+|---|---|
+| `execution` | `judge_raised`／`db_error`／`process_exit` |
+| `hint` | `phase_disabled`／`gen_unavailable`／`model_error`／`raw_llm_path` |
+| `teaching` | `phase_disabled`／`model_error`／`db_error`／`component_skipped` |
+| 通用 | `''`（正常，无异常） |
+
+### 6.3 事务顺序（**四步确定序列**，不得只留"原则"）
+
+| 步 | 时机 | **在一个短事务内**提交 |
+|---|---|---|
+| **1** | 判题返回后 | 写 `submission_log` 行 ＋ 创建 `teaching(pending)` ＋ `execution` 回写终态 ＋ **回填 `submission_id`** |
+| **2** | 分类／记忆阶段 | 回填提交行分类字段（`error_class`／`error_kp`）＋ 符合条件的**错误记忆计数** ＋ 置 `teaching.progress='cls_mem_done'` |
+| **3** | —— | **无事务：调用模型**（提示生成／兜底） |
+| **4** | 收尾 | 更新 `hint` 事件 ＋ 回填提交行提示字段（`hint_level`／`hint_unlocked_level`）＋ `teaching` 终态 |
+
+**四条硬规则**：
+
+1. **模型失败不撤销已提交的分类与记忆事实**（第 2 步已提交的**不回滚**）；
+2. **同一请求重复进入第 2 步不得再次增加错误记忆** —— **检查 `progress`、回填分类字段、增加符合条件的记忆计数、设置进度标记，四者必须在同一个短事务内完成**；
+   **不得**在事务外先检查、再无条件写入（"先查后写"的间隙仍会重复计数）；若 `progress` 已是 `cls_mem_done` 则整体跳过；
+3. **数据库失败不得伪装成教学成功** —— `reason_code='db_error'`，异常必须暴露；
+4. **有可用兜底提示时，不因"模型曾失败"就把整个教学过程记为 `failed`** ——
+   终态按**约定的教学步骤是否都有产出**判断（`fallback` 属**有产出**），**生成来源另记**（`hint_source`）。
+   若某步确实无产出或未完成 → `partial`／`failed`，并在 `reason` 写清**哪个组件、哪一步**。
+
+### 6.4 前后测（`phase ≠ practice`）三入口行为（**不得混为一谈**）
+
+| 请求 | 应有行为 |
+|---|---|
+| 普通 `POST /api/submit` | **正常判题**；写提交行 ＋ `execution` 事件；`teaching` 记 `phase_disabled`；**不**调模型、**不**更新错误记忆、**不**返回教学提示 |
+| `POST /api/submit`（`request_hint=true`） | **仍正常判题、仍写提交行**；`hint` 事件记 `phase_disabled`；**不**调模型、**不**更新记忆 |
+| `POST /api/hint` | `hint` 事件记 `phase_disabled`；**提前返回**：**不**调 `judge`、**不**调模型（故**不**写 `execution` 事件） |
+
+> **要点**：**禁用 AI 教学帮助 ≠ 拒绝学生的正式提交**。前后测必须照常判题、照常记录正式提交，
+> 否则会误伤测量数据；同时不得留下可绕过限制的入口。
+
+### 6.5 纯提示路径的分支（无 `submission_log` 行）
+
+- 纯提示**判题返回后只更新其 `execution` 事件**，**不创建**正式提交记录；
+- 本轮 **`teaching` 事件限定为"正式提交的教学处理"**；纯提示用 `execution ＋ hint` 两条表达；
+- `judge` 抛**可捕获**异常 → `execution` 记 `aborted`，且该请求**已创建的 `hint` 事件收尾为 `unavailable`**；
+- **正式提交带提示时**（`/api/submit` 且 `request_hint=true`）：该请求的 `submission_id` **必须同时回填到 `execution` 事件与该请求已创建的 `hint` 事件**，不得只回填执行事件；
+- **无法完成收尾**的情形（**进程退出**、**终态回写失败**等）都可能留下 `started`／`requested` 等未完成状态；**仅凭该状态不能判定具体原因**；
+- **`aborted` 只描述 `judge` 调用未正常完成**：后续模型／教学环节的异常**不得**覆盖**已完成**的 `execution` 终态。
+
+### 6.6 与 `§3` `submission_log` 的关系（不改旧列）
+
+- 旧 16 列**语义不动**，只做关联：`event_log.submission_id = submission_log.id`；
+- **提交事实落库前**，该请求 `execution.submission_id` **暂空**，落库时按同一 `request_id` **回填**；
+- 默认值读法（**这是本表存在的意义**）：
+
+| 关联 `teaching.status` | 提交行教学字段（`error_class`／`error_kp`／`hint_level`…）的含义 |
+|---|---|
+| `pending` | **教学处理尚未结束**；**已完成到哪一步要结合 `progress` 判断** —— **不可**把该请求的所有教学字段一律当作"未处理"，更**不可**当结论 |
+| `done` | **本请求按阶段与配置应执行的教学步骤已完成**；各字段须**结合组件启用情况、是否请求提示、字段自身含义**解释 —— **不得**把所有默认值统一说成"真的没命中"（例：**分类组件未启用 ≠ 分类后没命中**；**未请求提示 ≠ 请求后没产出**） |
+| `partial`／`failed` | 教学**未成功**，但**判题事实有效**，可用于判题侧统计 |
+| `phase_disabled` | 该阶段**本就不做教学**，空白是设计使然 |
+| **无关联事件行** | **旧版本未采集**（历史提交）——**不得**当 `done`，**不得**反推"没有请求提示" |
+
+- **纯提示请求**无提交行 → 其 `execution`／`hint` 的 `submission_id` 为 **NULL**，靠 `request_id` 串起。
+
+### 6.7 计数口径（Q1：四类数字**分开表述**）
+
+| 指标 | 定义 |
+|---|---|
+| 提交次数 | `count(*) from submission_log` |
+| 提示请求次数 | `count(*) from event_log where event_type='hint'`（含 `phase_disabled` 与未完成的 `requested`） |
+| **执行尝试登记数** | `count(*) where event_type='execution'` |
+| **判题完成数** | `… and status='finished'` |
+| **已记录中止数** | `… and status='aborted'` |
+| **尚无终态数** | `… and status='started'` |
+
+> `started` 只代表"**已登记执行尝试**"，`judge` 尚未真正返回；请求仍在处理中时它属**正常"处理中"**，
+> 最终分析须**按采集截止点**说明，**不得**一律当作异常遗留。
+> 上述数字**不得合并**成一个"尝试次数"；报告里出现任一数字都要写明取自哪一行。
+
+### 6.8 旧库兼容、唯一性、脱敏与删除
+
+- **建表**：沿用 `app/db.py` 的"首次连接自动建表"（`CREATE TABLE IF NOT EXISTS` ＋ 幂等补列），
+  旧库直接补出新表，**无需**独立迁移脚本；重复启动不重复建、不改已有行；
+- **历史数据**：旧提交**无事件行＝旧版本未采集**（见 §6.6 末行），不得当 `done`、不得反推；
+- **唯一性**：`UNIQUE(request_id, event_type)` 只防**同一请求内**重复；**客户端重发幂等未实现**，
+  **不得**声称已具备；
+- **`reason` 脱敏**：只存**受控码 ＋ 脱敏说明**；**严禁**异常全文、隐藏用例输入、密钥、模型原始响应；
+- **删除参与者数据**：须**一致处理**提交表、事件表、错误记忆表及任何归档副本（同一 `participant_id`），
+  并留删除记录，不得只删其中一部分。
+
+### 6.9 保留与访问（**必须在真实学生数据采集前落实**）
+
+- **原始关联数据**（可定位到个人的三张表）：须明确**保存期限**、**访问权限**、**归档方式**与**到期删除方式**；
+- **去标识化统计结果**可另定保留期限；
+- 具体年限与审批口径**按知情同意与学校要求确定后回填**（本契约不擅自填数字），
+  但**必须在真实学生数据采集开始前落实**。
+
+### 6.10 Q6 受控增量登记清单
+
+| 登记项 | 内容 |
+|---|---|
+| 表结构与事件语义 | §6.1 ＋ §6.2 |
+| 与提交表的关联方式 | §6.6（`submission_id` 关联 ＋ 回填时机） |
+| 哪些入口写入 | `§6.4`（含 `phase_disabled`）＋ §6.5（纯提示分支） |
+| 重试／失败／禁用如何记录 | §6.3 四条硬规则 ＋ §6.2.4 码表 |
+| 是否影响原响应 | **不影响**：`/api/submit` 与 `/api/hint` 现有响应字段不变；`event_id`／`request_id` **不回传前端** |
+| 保留与删除规则 | §6.9 |
+| 幂等迁移与旧库兼容 | §6.8 |
+| 未动项 | `§1` `error_type`／`stderr` 红线、`§3` 16 列语义、`§4` 错误记忆表结构、岗位③判题器接口 |
+
+### 6.11 明确**不做**
+
+通用事件平台／消息队列；自动续跑任务；前端确认机制；客户端重发幂等；
+在事件表里存学生代码全文、模型原始回包或隐藏用例输入。
