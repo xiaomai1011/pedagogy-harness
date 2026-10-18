@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 
 from app import llm as llm_mod
+from app.harness import redaction
 from app.harness.base import TeachingComponent
 
 # 教学五类（契约 §3 的 error_class 取值）。"未分类"是兜底态，不是类别。
@@ -128,12 +129,14 @@ def _parse_llm_reply(raw: str, points: list[str]) -> Classification:
 
 def _llm_classify(judge_result, code: str, question: dict) -> Classification:
     points = [p for p in (question or {}).get("knowledge_points", []) if p]
+    # F：送进分类模型的报错同样是过滤后的视图（隐藏用例数据不得进入模型上下文）
+    err = redaction.model_stderr(judge_result, question)[:500]
     user = (
         "请把这次学生错误归入教学五类之一。\n"
         f"可选类别：{'、'.join(ERROR_CLASSES)}\n"
         f"可选知识点：{'、'.join(points) if points else '（本题未给定，填空串）'}\n"
         f"执行层 error_type：{getattr(judge_result, 'error_type', '')}\n"
-        f"报错信息：{(getattr(judge_result, 'stderr', '') or '')[:500]}\n"
+        f"报错信息：{err}\n"
         f"学生代码：\n{code}\n\n"
         '只输出 JSON，形如 {"error_class": "边界", "knowledge_point": "数组下标"}；'
         "知识点只能从上面列表里挑，挑不到就填空串。"

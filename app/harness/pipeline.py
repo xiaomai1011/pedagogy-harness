@@ -24,6 +24,7 @@ from app import llm as llm_mod
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
 from app.harness import error_classifier as ec
 from app.harness import error_memory as em
+from app.harness import redaction
 from app.harness import registry
 from app.harness.base import SubmissionContext
 from app.harness.config_switch import ERROR_CLASSIFIER, PRESETS, HarnessConfig
@@ -186,10 +187,12 @@ def _run_components(ctx: SubmissionContext, config: HarnessConfig) -> None:
             ctx.skipped.append(component.name)
     if not ctx.message:
         # 没有任何教学组件产出反馈 → 裸大模型兜底：契约 §6.2.2 要求**显式**记 raw_llm
+        # 送进模型的报错必须是**过滤后**的视图（F：隐藏用例数据不得进入任何模型上下文）
         ctx.message = llm_mod.llm(
             system="你是编程助手，请回答学生的问题。",
             user=f"题目：{ctx.question.get('statement', '')}\n学生的代码：\n{ctx.code}\n"
-                 f"判题结果：{ctx.judge_result.status}；报错：{ctx.judge_result.stderr}",
+                 f"判题结果：{ctx.judge_result.status}；"
+                 f"报错：{redaction.model_stderr(ctx.judge_result, ctx.question)}",
         )
         ctx.source = "raw_llm"
 
@@ -394,12 +397,17 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
 
 
 def _response(ctx, result, *, log_payload: dict | None, meta: dict | None = None) -> dict:
-    """两种入口共用的返回结构。`log_payload` 为 `None` 表示本次**没写库**。"""
+    """两种入口共用的返回结构。`log_payload` 为 `None` 表示本次**没写库**。
+
+    **F：学生响应里不得带隐藏用例数据** —— `failed_cases` 与 `stderr` 都走
+    `redaction` 的安全视图（隐藏条目清空输入/期望/实际输出；顶层 `stderr` 无法归属来源时
+    只留受控异常类别名）。判题事实（`status`／`error_type`／通过数量／耗时）一律不变。
+    """
     phase_disabled = bool((meta or {}).get("phase_disabled"))
     return {
         "status": result.status if result is not None else "phase_disabled",
-        "failed_cases": result.failed_cases if result is not None else [],
-        "stderr": result.stderr if result is not None else "",
+        "failed_cases": redaction.student_failed_cases(result, ctx.question),
+        "stderr": redaction.student_stderr(result, ctx.question),
         # 执行层错误类型（`pass/fail` 之外的**结构化**字段）：前端用它渲染"错误类型：运行时错误"，
         # 不必再去抠 `judge_feedback` 的字符串
         "error_type": result.error_type if result is not None else "",

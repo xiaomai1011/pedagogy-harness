@@ -444,11 +444,14 @@
       }
     }
     failed.forEach((c) => {
+      // 隐藏用例：**输入、期望、实际输出一个都不渲染**（服务端已清空，这里再兜一道，
+      // 避免将来服务端口径变化时前端又把数据放出来）
       parts.push(`<div class="case ${c.hidden ? "hidden" : ""}">`
-        + `<div>· 用例 #${esc(c.case_index)}${c.hidden ? "（隐藏用例，不回显输入/期望）" : ""}</div>`
+        + `<div>· 用例 #${esc(c.case_index)}${c.hidden ? "（隐藏用例，不回显输入/期望/实际输出）" : ""}</div>`
         + (c.hidden ? "" : `<div class="muted">输入：${esc(c.input)}</div>`)
         + (c.hidden ? "" : `<div class="muted">期望：${esc(c.expected)}</div>`)
-        + `<div class="muted">实际：${esc(c.actual)}</div></div>`);
+        + (c.hidden ? "" : `<div class="muted">实际：${esc(c.actual)}</div>`)
+        + `</div>`);
     });
     if (state.debug && d.judge_feedback) {
       parts.push('<div class="flag" style="margin-top:14px">调试：judge_feedback<br>'

@@ -22,6 +22,7 @@
 
 from app import llm as llm_mod
 from app.harness import leak_guard
+from app.harness import redaction
 from app.harness.base import TeachingComponent
 
 MAX_LEVEL = 4
@@ -69,9 +70,12 @@ def next_state(*, prev_unlocked: int, consecutive_fail: int,
 
 
 def _fail_feedback(ctx) -> str:
-    """判题反馈（客观陈述，不评价学生本人）。"""
+    """判题反馈（客观陈述，不评价学生本人）。
+
+    **F：学生可见字段** → 报错正文走 `redaction` 安全视图（含隐藏用例的题不透传原文）。
+    """
     lines = [f"未通过测试（{ctx.judge_result.status}）；错误类型：{ctx.judge_result.error_type}"]
-    stderr = (ctx.judge_result.stderr or "").strip()
+    stderr = redaction.student_stderr(ctx.judge_result, ctx.question).strip()
     if stderr:
         lines.append("报错信息：\n" + "\n".join(stderr.split("\n")[:3]))
     return "\n".join(lines)
@@ -79,12 +83,13 @@ def _fail_feedback(ctx) -> str:
 
 def _hint_prompt(ctx) -> str:
     q = ctx.question
+    # F：送进提示模型的报错同样是过滤后的视图（隐藏用例数据不得进入模型上下文）
+    err = redaction.model_stderr(ctx.judge_result, q).strip()[:300]
     parts = [
         f"题目标题：{q.get('title', '')}",
         f"题面：{q.get('statement', '')}",
         f"学生当前代码：\n{ctx.code}",
-        f"判题结果：未通过。错误类型：{ctx.judge_result.error_type}；"
-        f"报错：{(ctx.judge_result.stderr or '').strip()[:300]}",
+        f"判题结果：未通过。错误类型：{ctx.judge_result.error_type}；报错：{err}",
     ]
     cls = ctx.classification
     if cls is not None and getattr(cls, "error_class", "未分类") != "未分类":
