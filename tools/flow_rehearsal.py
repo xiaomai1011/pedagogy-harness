@@ -77,6 +77,102 @@ def _build_ops(wrong_code: str, answer_code: str) -> list[dict]:
     ]
 
 
+def _render_report(*, mode: str, judge_is_stub: bool, configured: bool,
+                   db_path: str, rows: list[dict]) -> tuple[str, bool]:
+    """把已跑完的 `rows` 渲染成 markdown 报告，返回 `(文本, 是否全部通过)`。
+
+    **不联网、不碰数据库、不读环境变量** —— 所以「零模型调用（`waits` 为空）」这条分支
+    可以被**离线单测**覆盖（`tests/test_flow_rehearsal.py`），不必真去触发它。
+    """
+    all_ok = all(r["log_ok"] and r["state_ok"] for r in rows)
+    waits = [r["llm_ms"] for r in rows if r["calls"]]
+    worst = max(rows, key=lambda r: r["wall"]) if rows else None
+    if waits:
+        median_wait = statistics.median(waits)
+        wait_line = (f"本次少量**串行**调用的模型累计等待：中位 {median_wait:.0f} ms、"
+                     f"最快 {min(waits):.0f} ms、最慢 {max(waits):.0f} ms（样本 {len(waits)} 次；"
+                     f"**样本量小，不报 p95**）。**课堂可用性仍待真实流程与并发验证。**")
+    else:
+        wait_line = "模型累计等待：**无样本**，不计算中位数／最小值／最大值（本次没有任何模型调用进入计时）。"
+    worst_line = (f"- 最慢操作：**{worst['label']}** → 总 {worst['wall']:.0f} ms"
+                  f"（其中模型累计等待 {worst['llm_ms']:.0f} ms）" if worst else "- 最慢操作：无样本")
+
+    mode_desc = ("constructed —— **仅第 ⑧ 步**使用**人工构造并注入**的判题结果"
+                 "（**不是**判题器的实际执行结果）；**其余 7 步仍走当前仓库判题器**，"
+                 "故本模式**不是**“完全脱离判题器的固定夹具测试”"
+                 if mode == "constructed"
+                 else "real —— 全程**调用当前仓库判题器、未注入**任何判题结果"
+                      "（**不**凭模式名宣称已通过真实判题验收）")
+    if judge_is_stub:
+        judge_desc = "**探测到桩特征**（stderr 含“桩”）：本次判题**不是**真实执行"
+    elif mode == "real":
+        judge_desc = "调用**当前仓库判题器**、未注入（**不**等同于已通过真实判题验收，仍需 `tools/accept_judge.py`）"
+    else:
+        judge_desc = "未探测到桩特征：第 ⑧ 步仍为**注入的构造结果**，常规 7 步走当前仓库判题器"
+    model_desc = ("配置齐全（`PH_LLM_*` 三项均有）→ 本次“模型等待”为**真实调用**实测"
+                  if configured else
+                  "**不齐全**：`app/llm.py` 会返回桩文本，故本次“模型等待”**不是**真实模型调用")
+
+    md = []
+    md.append("# 后端管线预演记录（桩判题／构造通过结果）" if mode == "constructed"
+              else "# 后端管线预演记录（真实判题器）")
+    md.append("")
+    md.append(f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}　被试：`{PID}`　题目：`{QID}`　分组：`exp`")
+    md.append(f"> **模式**：{mode_desc}")
+    md.append(f"> **判题器**：{judge_desc}")
+    md.append(f"> **模型配置**：{model_desc}")
+    md.append(f"> **数据库**：本次新建的独立临时库 `{db_path}`，**未触碰真实 `pedagogy.sqlite`**。")
+    md.append("> **本记录的范围**：只验证 **主干管线跑通 / 各步耗时 / 提交日志与操作一一对应**；")
+    md.append("> **不经浏览器与 HTTP，无学生读题与编码过程 → 不代表完整课堂预演**，也不能用于证明并发稳定性。")
+    md.append("")
+    md.append("## 1 逐步耗时（串行）")
+    md.append("")
+    md.append("| 操作 | 总耗时(ms) | 模型累计等待(ms) | 模型调用次数 | 模型失败次数 |")
+    md.append("|---|---|---|---|---|")
+    for r in rows:
+        md.append(f"| {r['label']} | {r['wall']:.0f} | {r['llm_ms']:.0f} | {r['calls']} | {r['llm_bad']} |")
+    md.append("")
+    md.append("> 「模型累计等待」= 该步操作内**所有**模型调用耗时之和；若发生重试，它**大于**单次请求耗时。")
+    md.append("")
+    md.append("## 2 逐项验收（日志与操作是否一一对应 + 返回状态与等级是否符合预期）")
+    md.append("")
+    md.append("| 操作 | 日志增量 期望/实际 | 日志符合 | status 期望/实际 | hint_level 期望/实际 | unlocked 期望/实际 | 状态·等级符合 | 异常 |")
+    md.append("|---|---|---|---|---|---|---|---|")
+    for r in rows:
+        md.append(
+            f"| {r['label']} | {r['exp_log']:+d} / {r['got_log']:+d} | {'✅' if r['log_ok'] else '❌'} "
+            f"| {r['exp_status']} / {r['got_status']} | {r['exp_hint']} / {r['got_hint']} "
+            f"| {r['exp_unlocked']} / {r['got_unlocked']} | {'✅' if r['state_ok'] else '❌'} "
+            f"| {r['err'] or '—'} |")
+    md.append("")
+    if all_ok:
+        md.append("**总验收结果**：✅ 全部通过（日志与状态两项**同时**满足）。")
+    else:
+        bad_log = [r["label"] for r in rows if not r["log_ok"]]
+        bad_state = [r["label"] for r in rows if not r["state_ok"]]
+        md.append("**总验收结果**：❌ 未通过。")
+        if bad_log:
+            md.append(f"- 日志计数不符：{'、'.join(bad_log)}")
+        if bad_state:
+            md.append(f"- 状态／等级不符或发生异常：{'、'.join(bad_state)}")
+    md.append("")
+    md.append("## 3 耗时与故障小结")
+    md.append("")
+    md.append(worst_line)
+    md.append(f"- {wait_line}")
+    md.append(f"- 故障：模型调用失败 {sum(r['llm_bad'] for r in rows)} 次；主干抛异常 {sum(1 for r in rows if r['err'])} 次")
+    md.append("")
+    md.append("## 4 与后续验收的关系")
+    md.append("")
+    md.append("- 本记录**不**用于判断提示质量；提示质量由验收配合 ① 的独立材料（**人工构造并注入**的判题结果）承担。")
+    if mode == "constructed":
+        md.append("- 判题真实现交付后，须改用 `--mode real` **重跑**（届时第 ⑧ 步不再注入），本记录的“通过”才算真实。")
+    else:
+        md.append("- 本次为 real 模式：判题结果全部来自真实判题器，未注入。")
+    md.append("")
+    return "\n".join(md), all_ok
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="后端管线预演（验收配合 ②）")
     ap.add_argument("--mode", choices=("constructed", "real"), default="constructed")
@@ -121,9 +217,13 @@ def main() -> int:
     db.init_db()
     question = pipeline_mod.load_question(QID)
 
-    # ③ 探测判题器是否仍为桩：只用于报告如实说明，不改变任何行为
-    probe = pipeline_mod.judge(question, "print(1)")
-    judge_is_stub = "桩" in (getattr(probe, "stderr", "") or "")
+    # ③ 探测判题器是否仍为桩：只用于报告如实说明，不改变任何行为。
+    #    探测本身失败（判题器抛异常）不该让脚本崩掉 —— 按“未探到明确桩特征”处理。
+    try:
+        probe = pipeline_mod.judge(question, "print(1)")
+        judge_is_stub = "桩" in (getattr(probe, "stderr", "") or "")
+    except Exception:
+        judge_is_stub = False
 
     # real 模式：探到**明确桩特征**就立即拒绝运行 —— 否则会出现"声称用真实判题器、
     # 实际跑的是桩"的自相矛盾报告。**不做自动降级**（不悄悄退化成 constructed）。
@@ -189,92 +289,9 @@ def main() -> int:
             "err": err,
         })
 
-    all_ok = all(r["log_ok"] and r["state_ok"] for r in rows)
-    waits = [r["llm_ms"] for r in rows if r["calls"]]
-    worst = max(rows, key=lambda r: r["wall"])
-    if waits:
-        median_wait = statistics.median(waits)
-        wait_line = (f"本次少量**串行**调用的模型累计等待：中位 {median_wait:.0f} ms、"
-                     f"最快 {min(waits):.0f} ms、最慢 {max(waits):.0f} ms（样本 {len(waits)} 次；"
-                     f"**样本量小，不报 p95**）。**课堂可用性仍待真实流程与并发验证。**")
-    else:
-        wait_line = "模型累计等待：**无样本**，不计算中位数／最小值／最大值（本次没有任何模型调用进入计时）。"
-
-    mode_desc = ("constructed —— **仅第 ⑧ 步**使用**人工构造并注入**的判题结果"
-                 "（**不是**判题器的实际执行结果）；**其余 7 步仍走当前仓库判题器**，"
-                 "故本模式**不是**“完全脱离判题器的固定夹具测试”"
-                 if args.mode == "constructed"
-                 else "real —— 全程**调用当前仓库判题器、未注入**任何判题结果"
-                      "（**不**凭模式名宣称已通过真实判题验收）")
-    if judge_is_stub:
-        judge_desc = "**探测到桩特征**（stderr 含“桩”）：本次判题**不是**真实执行"
-    elif args.mode == "real":
-        judge_desc = "调用**当前仓库判题器**、未注入（**不**等同于已通过真实判题验收，仍需 `tools/accept_judge.py`）"
-    else:
-        judge_desc = "未探测到桩特征：第 ⑧ 步仍为**注入的构造结果**，常规 7 步走当前仓库判题器"
-    model_desc = ("配置齐全（`PH_LLM_*` 三项均有）→ 本次“模型等待”为**真实调用**实测"
-                  if configured else
-                  "**不齐全**：`app/llm.py` 会返回桩文本，故本次“模型等待”**不是**真实模型调用")
-
-    md = []
-    md.append("# 后端管线预演记录（桩判题／构造通过结果）" if args.mode == "constructed"
-              else "# 后端管线预演记录（真实判题器）")
-    md.append("")
-    md.append(f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}　被试：`{PID}`　题目：`{QID}`　分组：`exp`")
-    md.append(f"> **模式**：{mode_desc}")
-    md.append(f"> **判题器**：{judge_desc}")
-    md.append(f"> **模型配置**：{model_desc}")
-    md.append(f"> **数据库**：本次新建的独立临时库 `{os.environ['PH_DB']}`，**未触碰真实 `pedagogy.sqlite`**。")
-    md.append("> **本记录的范围**：只验证 **主干管线跑通 / 各步耗时 / 提交日志与操作一一对应**；")
-    md.append("> **不经浏览器与 HTTP，无学生读题与编码过程 → 不代表完整课堂预演**，也不能用于证明并发稳定性。")
-    md.append("")
-    md.append("## 1 逐步耗时（串行）")
-    md.append("")
-    md.append("| 操作 | 总耗时(ms) | 模型累计等待(ms) | 模型调用次数 | 模型失败次数 |")
-    md.append("|---|---|---|---|---|")
-    for r in rows:
-        md.append(f"| {r['label']} | {r['wall']:.0f} | {r['llm_ms']:.0f} | {r['calls']} | {r['llm_bad']} |")
-    md.append("")
-    md.append("> 「模型累计等待」= 该步操作内**所有**模型调用耗时之和；若发生重试，它**大于**单次请求耗时。")
-    md.append("")
-    md.append("## 2 逐项验收（日志与操作是否一一对应 + 返回状态与等级是否符合预期）")
-    md.append("")
-    md.append("| 操作 | 日志增量 期望/实际 | 日志符合 | status 期望/实际 | hint_level 期望/实际 | unlocked 期望/实际 | 状态·等级符合 | 异常 |")
-    md.append("|---|---|---|---|---|---|---|---|")
-    for r in rows:
-        md.append(
-            f"| {r['label']} | {r['exp_log']:+d} / {r['got_log']:+d} | {'✅' if r['log_ok'] else '❌'} "
-            f"| {r['exp_status']} / {r['got_status']} | {r['exp_hint']} / {r['got_hint']} "
-            f"| {r['exp_unlocked']} / {r['got_unlocked']} | {'✅' if r['state_ok'] else '❌'} "
-            f"| {r['err'] or '—'} |")
-    md.append("")
-    if all_ok:
-        md.append("**总验收结果**：✅ 全部通过（日志与状态两项**同时**满足）。")
-    else:
-        bad_log = [r["label"] for r in rows if not r["log_ok"]]
-        bad_state = [r["label"] for r in rows if not r["state_ok"]]
-        md.append("**总验收结果**：❌ 未通过。")
-        if bad_log:
-            md.append(f"- 日志计数不符：{'、'.join(bad_log)}")
-        if bad_state:
-            md.append(f"- 状态／等级不符或发生异常：{'、'.join(bad_state)}")
-    md.append("")
-    md.append("## 3 耗时与故障小结")
-    md.append("")
-    md.append(f"- 最慢操作：**{worst['label']}** → 总 {worst['wall']:.0f} ms（其中模型累计等待 {worst['llm_ms']:.0f} ms）")
-    md.append(f"- {wait_line}")
-    md.append(f"- 故障：模型调用失败 {sum(r['llm_bad'] for r in rows)} 次；主干抛异常 {sum(1 for r in rows if r['err'])} 次")
-    md.append("")
-    md.append("## 4 与后续验收的关系")
-    md.append("")
-    md.append("- 本记录**不**用于判断提示质量；提示质量由验收配合 ① 的独立材料（**人工构造并注入**的判题结果）承担。")
-    if args.mode == "constructed":
-        md.append("- 判题真实现交付后，须改用 `--mode real` **重跑**（届时第 ⑧ 步不再注入），本记录的“通过”才算真实。")
-    else:
-        md.append("- 本次为 real 模式：判题结果全部来自真实判题器，未注入。")
-    md.append("")
-
-    text = _redact("\n".join(md), secrets)
+    text, all_ok = _render_report(mode=args.mode, judge_is_stub=judge_is_stub,
+                                  configured=configured, db_path=os.environ["PH_DB"], rows=rows)
+    text = _redact(text, secrets)
     print(text)
     if args.out:
         with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
