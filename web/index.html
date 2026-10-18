@@ -7,129 +7,211 @@
   <style>
     /* ---------- 深色主题变量 ---------- */
     :root {
-      --bg: #1e1e1e; --bg-soft: #252526; --bg-hard: #333333;
-      --line: #3c3c3c; --fg: #d4d4d4; --fg-dim: #9d9d9d;
+      --bg: #1e1e1e; --bg-soft: #252526; --bg-hard: #2f2f30;
+      --bg-panel: #232324;
+      --line: #3c3c3c; --line-soft: #333335;
+      --fg: #d9d9d9; --fg-dim: #a6a6a6; --fg-weak: #838383;
       --accent: #0e639c; --accent-hover: #1177bb;
       --ok: #4ec9b0; --warn: #d7ba7d; --bad: #f48771;
+      --judge: #4a9eff; --teach: #b07cd6;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; height: 100vh; background: var(--bg); color: var(--fg);
-      font-family: -apple-system, "Microsoft YaHei", "Segoe UI", sans-serif; font-size: 14px;
+      font-family: -apple-system, "Microsoft YaHei", "Segoe UI", sans-serif;
+      font-size: 15px; line-height: 1.75;
+      overflow: auto;   /* 窗口很矮时允许整页滚动，避免操作条被挤出可视区 */
     }
-    /* ---------- 五区布局 ---------- */
+    /* ---------- 布局：标题栏 / 横幅 / (活动栏·题目栏·工作区) / 状态栏 ---------- */
     .app {
-      height: 100vh; display: grid;
-      grid-template-columns: 48px 300px 1fr;
-      grid-template-rows: 40px 1fr 1fr 24px;
+      height: 100vh; min-height: 480px; display: grid;
+      grid-template-columns: 44px 400px minmax(0, 1fr);
+      grid-template-rows: 46px auto minmax(0, 1fr) 26px;
       grid-template-areas:
         "titlebar titlebar titlebar"
-        "activity sidebar  editor"
-        "activity sidebar  panel"
+        "banner   banner   banner"
+        "activity sidebar  work"
         "status   status   status";
     }
-    .titlebar { grid-area: titlebar; display: flex; align-items: center; gap: 12px;
-      padding: 0 12px; background: var(--bg-hard); border-bottom: 1px solid var(--line); }
-    .titlebar h1 { font-size: 14px; font-weight: 600; margin: 0; }
-    .badges { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-    .badge { font-size: 11px; padding: 2px 8px; border: 1px solid var(--line);
+    .titlebar { grid-area: titlebar; display: flex; align-items: center; gap: 14px;
+      padding: 0 14px; background: var(--bg-hard); border-bottom: 1px solid var(--line); font-size: 14px; }
+    .titlebar h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .3px; }
+    .spacer { margin-left: auto; }
+    .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+    .badge { font-size: 12px; padding: 2px 9px; border: 1px solid var(--line);
       border-radius: 10px; color: var(--fg-dim); background: var(--bg-soft); }
+
+    /* ---------- 横幅：桩判题警示 / 前后测说明 ---------- */
+    .banner { grid-area: banner; display: none; padding: 10px 16px; font-size: 14px;
+      line-height: 1.7; border-bottom: 1px solid var(--line); }
+    .banner.show { display: block; }
+    .banner.stub { background: #3a2f18; color: #f2dca8; border-bottom-color: #5c4a1e; }
+    .banner.phase { background: #1d2c3a; color: #a8cbe8; border-bottom-color: #2c4359; }
+    .banner b { font-weight: 700; }
+
     .activity { grid-area: activity; background: var(--bg-hard);
       border-right: 1px solid var(--line); display: flex; flex-direction: column;
       align-items: center; padding-top: 12px; gap: 14px; }
-    .activity span { font-size: 18px; color: var(--fg-dim); cursor: default; }
+    .activity span { font-size: 18px; color: var(--fg-dim); }
+
+    /* ---------- 题目栏 ---------- */
     .sidebar { grid-area: sidebar; background: var(--bg-soft); border-right: 1px solid var(--line);
-      overflow: auto; padding: 10px 12px; }
-    .editor-wrap { grid-area: editor; position: relative; min-height: 0; }
+      overflow: auto; padding: 16px 18px 28px; }
+    .sidebar h2.q-title { font-size: 19px; margin: 12px 0 4px; line-height: 1.5; }
+    .sidebar .q-meta { color: var(--fg-dim); font-size: 13px; margin-bottom: 12px; }
+    .sidebar .q-stmt { line-height: 1.9; font-size: 15px; white-space: pre-wrap; margin: 8px 0 16px; }
+    .io-req { background: var(--bg-panel); border: 1px solid var(--line-soft);
+      border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; line-height: 1.9; font-size: 14px; }
+    .io-req .k { color: var(--judge); font-weight: 600; }
+    .ex-card { background: var(--bg-panel); border: 1px solid var(--line-soft);
+      border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; font-size: 14px; line-height: 1.9; }
+    .ex-card .row { display: flex; gap: 10px; }
+    .ex-card .row .k { color: var(--fg-dim); min-width: 56px; }
+    .ex-card code, .io-req code { font-family: Consolas, Menlo, monospace; color: #ce9178; font-size: 14px; }
+    .muted { color: var(--fg-dim); }
+    .weak { color: var(--fg-weak); }
+
+    /* ---------- 工作区：编辑器 ─ 拖动条 ─ 操作条 ─ 结果双区 ---------- */
+    .work { grid-area: work; display: flex; flex-direction: column; min-height: 0; }
+    .edit-pane { flex: 0 0 var(--edit-h, 46%); min-height: 88px; position: relative;
+      border-bottom: 1px solid var(--line); }
     #editor { position: absolute; inset: 0; }
     #code-ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none;
-      background: #1e1e1e; color: #d4d4d4; border: 0; padding: 10px;
-      font-family: Consolas, Menlo, monospace; font-size: 13px; }
-    .editor-toolbar { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 8px; z-index: 5; }
-    .panel { grid-area: panel; background: var(--bg-soft); border-top: 1px solid var(--line);
-      display: flex; flex-direction: column; min-height: 0; }
-    .tabs { display: flex; gap: 2px; background: var(--bg-hard); border-bottom: 1px solid var(--line); }
-    .tabs button { background: transparent; border: 0; color: var(--fg-dim); padding: 7px 14px;
-      cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
-    .tabs button.active { color: #fff; border-bottom-color: var(--accent); }
-    .tab-body { padding: 10px 12px; overflow: auto; white-space: pre-wrap; flex: 1;
-      font-family: Consolas, Menlo, monospace; font-size: 13px; line-height: 1.6; }
-    .statusbar { grid-area: status; background: var(--bg-hard); border-top: 1px solid var(--line);
-      display: flex; align-items: center; gap: 16px; padding: 0 12px; font-size: 12px;
+      background: #1e1e1e; color: #d4d4d4; border: 0; padding: 14px;
+      font-family: Consolas, Menlo, monospace; font-size: 15px; line-height: 1.7; }
+    /* 反馈变长时，拖这里就能给下方腾地方 */
+    .splitter { flex: 0 0 7px; cursor: row-resize; background: var(--bg-hard);
+      border-bottom: 1px solid var(--line); }
+    .splitter:hover, .splitter.dragging { background: var(--accent); }
+    .splitter::after { content: ""; display: block; width: 46px; height: 3px; margin: 2px auto 0;
+      border-radius: 2px; background: var(--line); }
+
+    .actionbar { flex: 0 0 50px; display: flex; align-items: center; gap: 12px; padding: 0 14px;
+      background: var(--bg-hard); border-bottom: 1px solid var(--line); font-size: 14px; }
+    .actionbar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
+    /* 提示等级：**只读状态展示**（不是可点击升级的按钮） */
+    .lvl-strip { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px;
       color: var(--fg-dim); }
+    .lvl { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 10px;
+      border: 1px solid var(--line); color: var(--fg-weak); background: var(--bg); font-size: 13px; }
+    .lvl.on { border-color: var(--teach); color: #e5d4f5; background: rgba(176,124,214,.16); }
+    .lvl.cur { border-color: var(--accent); color: #fff; background: var(--accent); }
+    .help { cursor: help; color: var(--fg-dim); font-size: 13px; border: 1px solid var(--line);
+      border-radius: 50%; width: 18px; height: 18px; display: inline-flex; align-items: center;
+      justify-content: center; }
+
+    /* 结果双区：左＝程序运行结果，右＝AI 学习提示（**各说各的，不互相复述**） */
+    .results { flex: 1 1 auto; min-height: 88px; display: grid; grid-template-columns: 1fr 1fr; }
+    .result-col { display: flex; flex-direction: column; min-height: 0; background: var(--bg-panel); }
+    .result-col + .result-col { border-left: 1px solid var(--line); }
+    .result-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+      border-bottom: 1px solid var(--line-soft); font-size: 14px; font-weight: 600; }
+    .result-head .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .result-head.judge .dot { background: var(--judge); }
+    .result-head.teach .dot { background: var(--teach); }
+    .result-head .sub { font-weight: 400; color: var(--fg-dim); font-size: 13px; }
+    .result-body { padding: 14px 16px; overflow: auto; flex: 1; line-height: 1.8; font-size: 15px; }
+    .result-body.mono { font-family: Consolas, Menlo, monospace; font-size: 14px; white-space: pre-wrap; }
+    .case { border-left: 2px solid var(--line); padding-left: 12px; margin: 12px 0; line-height: 1.8; }
+    .case.hidden { border-left-color: var(--warn); }
+    .hint-text { white-space: pre-wrap; line-height: 1.9; }
+    .kp { margin-top: 14px; color: var(--fg-dim); font-size: 14px; }
+    details.memo { margin-top: 10px; color: var(--fg-weak); font-size: 13px; }
+    details.memo summary { cursor: pointer; }
+
+    .statusbar { grid-area: status; background: var(--bg-hard); border-top: 1px solid var(--line);
+      display: flex; align-items: center; gap: 16px; padding: 0 14px; font-size: 13px;
+      color: var(--fg-dim); white-space: nowrap; overflow: hidden; }
+
     /* ---------- 通用控件 ---------- */
-    button.btn { padding: 5px 12px; border-radius: 4px; border: 1px solid var(--line);
-      background: var(--bg-hard); color: var(--fg); cursor: pointer; font-size: 13px; }
+    button.btn { padding: 7px 16px; border-radius: 4px; border: 1px solid var(--line);
+      background: var(--bg-hard); color: var(--fg); cursor: pointer; font-size: 14px; }
     button.btn:disabled { opacity: .45; cursor: not-allowed; }
     button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     button.btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+    button.btn.busy { opacity: .8; cursor: progress; }
     input.pid { background: var(--bg); border: 1px solid var(--line); color: var(--fg);
-      padding: 3px 8px; border-radius: 4px; width: 84px; }
-    .q-item { padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+      padding: 4px 8px; border-radius: 4px; width: 96px; font-size: 14px; }
+    .q-item { padding: 8px 10px; border-radius: 4px; cursor: pointer; line-height: 1.7; font-size: 14px; }
     .q-item:hover { background: var(--bg-hard); }
     .q-item.sel { background: var(--accent); color: #fff; }
-    h3.sec { font-size: 12px; text-transform: uppercase; color: var(--fg-dim);
-      margin: 14px 0 6px; letter-spacing: .5px; }
-    pre.chunk { background: var(--bg-hard); border: 1px solid var(--line); border-radius: 4px;
-      padding: 8px; overflow: auto; font-size: 12px; margin: 6px 0; }
+    h3.sec { font-size: 13px; text-transform: uppercase; color: var(--fg-dim);
+      margin: 20px 0 8px; letter-spacing: .8px; border-top: 1px solid var(--line-soft); padding-top: 14px; }
+    h3.sec:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .flag { color: var(--warn); border: 1px solid var(--warn); border-radius: 4px;
-      padding: 4px 8px; display: inline-block; margin-bottom: 6px; font-size: 12px; }
-    .hint-badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
-      background: var(--accent); color: #fff; font-size: 12px; margin-right: 6px; }
-    .muted { color: var(--fg-dim); }
+      padding: 6px 10px; display: block; margin: 8px 0; font-size: 13px; line-height: 1.7; }
+    .hint-badge { display: inline-block; padding: 2px 10px; border-radius: 10px;
+      background: var(--teach); color: #fff; font-size: 13px; margin-right: 8px; }
+    .notice { font-size: 13px; padding: 3px 10px; border-radius: 10px; border: 1px solid var(--line); }
+    .notice.idle { color: var(--fg-weak); }
+    .notice.busy { color: var(--warn); border-color: var(--warn); }
+    .notice.ok { color: var(--ok); border-color: var(--ok); }
+    .notice.bad { color: var(--bad); border-color: var(--bad); }
   </style>
 </head>
 <body>
 <div class="app">
   <header class="titlebar">
     <h1>教学法 Harness 练习助手</h1>
-    <label class="muted" style="font-size:12px">被试编号
-      <input class="pid" id="pid" value="S01" />
-    </label>
-    <!-- ① 组件状态徽标：演示"组件可插拔"用，数据来自 GET /api/components -->
+    <label class="muted">被试编号 <input class="pid" id="pid" value="S01" /></label>
+    <span class="notice idle" id="op-state">就绪</span>
+    <span class="spacer"></span>
+    <!-- 组件徽标属**开发调试信息**：学生模式下默认收起，见「调试」开关 -->
     <div class="badges" id="badges"></div>
+    <button class="btn" id="btn-debug" title="显示/隐藏开发调试信息">调试</button>
   </header>
 
-  <!-- ② 活动栏 -->
-  <nav class="activity">
-    <span title="题目">▤</span>
-    <span title="反馈">◍</span>
-  </nav>
+  <!-- 横幅：桩判题警示 / 前后测阶段说明 -->
+  <div class="banner" id="banner"></div>
 
-  <!-- ③ 侧边栏：题目列表 + 题干 + 示例 + 可见用例 -->
+  <nav class="activity"><span title="题目">▤</span><span title="反馈">◍</span></nav>
+
+  <!-- 题目栏 -->
   <aside class="sidebar">
     <h3 class="sec">题目列表</h3>
     <div id="qlist" class="muted">加载中…</div>
     <div id="qdetail"></div>
   </aside>
 
-  <!-- ④ 编辑区 -->
-  <main class="editor-wrap">
-    <div id="editor"></div>
-    <div class="editor-toolbar">
-      <button class="btn" id="btn-hint" disabled>请求提示</button>
+  <!-- 工作区 -->
+  <main class="work" id="work">
+    <div class="edit-pane"><div id="editor"></div></div>
+    <div class="splitter" id="splitter" title="向上拖动可放大下方反馈区；向下拖动可放大代码区"></div>
+
+    <div class="actionbar">
       <button class="btn primary" id="btn-submit" disabled>提交代码</button>
+      <button class="btn" id="btn-hint" disabled>请求提示</button>
+      <div class="sep"></div>
+      <span class="notice idle" id="op-msg">选择题目后可提交</span>
+      <!-- 等级信息只在①这里与②AI 区标题两处出现；机制解释收进 ⓘ 帮助 -->
+      <span class="lvl-strip">
+        <span class="muted">提示等级</span>
+        <span class="lvl" data-lvl="1">L1</span>
+        <span class="lvl" data-lvl="2">L2</span>
+        <span class="lvl" data-lvl="3">L3</span>
+        <span class="lvl" data-lvl="4">L4</span>
+        <span class="help" title="等级只作状态展示，不能点击升级。&#10;每连续失败 2 次解锁一级（2 次→L1，4 次→L2，6 次→L3，8 次→L4）；&#10;「请求提示」只展示已解锁的等级，不会把等级推高。">ⓘ</span>
+      </span>
+    </div>
+
+    <div class="results">
+      <div class="result-col">
+        <div class="result-head judge"><span class="dot"></span><span id="h-judge-title">程序运行结果</span>
+          <span class="sub" id="h-judge">尚未提交</span></div>
+        <div class="result-body mono" id="tab-judge">提交后，这里显示判题器返回的程序运行结果。</div>
+      </div>
+      <div class="result-col">
+        <div class="result-head teach"><span class="dot"></span>AI 学习提示
+          <span class="sub" id="h-hint">尚未请求</span></div>
+        <div class="result-body" id="tab-hint">这里只显示教学提示：先给本次提示，再给相关知识点与历史提醒。</div>
+      </div>
     </div>
   </main>
-
-  <!-- ⑤ 底部面板 -->
-  <section class="panel">
-    <div class="tabs">
-      <button data-tab="judge" class="active">判题输出</button>
-      <button data-tab="hint">教学提示</button>
-      <button data-tab="trace">组件轨迹</button>
-    </div>
-    <div class="tab-body" id="tab-judge">（等待提交）</div>
-    <div class="tab-body" id="tab-hint" style="display:none">（等待提交）</div>
-    <div class="tab-body" id="tab-trace" style="display:none">（等待提交）</div>
-  </section>
 
   <footer class="statusbar">
     <span id="st-pid">S01</span>
     <span id="st-qid">—</span>
     <span id="st-phase">—</span>
-    <span id="st-level">提示等级 L0</span>
-    <span id="st-unlocked">已解锁 L0</span>
     <span id="st-seq">提交序号 —</span>
     <span id="st-ms">耗时 —</span>
   </footer>
@@ -140,32 +222,34 @@
 <script>
   // ---------- 状态 ----------
   const SAMPLE = "a, b = map(int, input().split())\nprint(a + b)\n";
-  const state = { qid: null, question: null, editorReady: false, usingMonaco: false };
-  // 阶段中文名（phase 由题库自描述，见 docs/contracts.md §2）
+  const state = {
+    qid: null, question: null, editorReady: false, usingMonaco: false,
+    debug: false,           // 学生模式默认**收起**开发调试信息
+    judgeStub: false,       // 服务端探测：判题器是否仍为桩
+    busy: false
+  };
   const PHASE_LABEL = { pretest: "前测", practice: "练习", posttest: "后测" };
+  const PHASE_NOTE = {
+    pretest: "当前为前测阶段：本阶段不提供 AI 学习提示（你的提交仍会正常记录）。",
+    posttest: "当前为后测阶段：本阶段不提供 AI 学习提示（你的提交仍会正常记录）。"
+  };
+  const STUB_NOTE = "当前为模拟判题：判题器尚未接入真实代码执行，结果不代表真实运行。";
+  const STUB_HINT_NOTE = "当前提示基于模拟判题，不用于判断代码正确性。";
 
-  // 学生界面**不显示分组**：正式实验统一 exp（契约 §5），这里恒定发送。
-  const GROUP = "exp";
+  const GROUP = "exp";   // 学生界面不显示分组：正式实验统一 exp（契约 §5）
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s === undefined || s === null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  // ---------- 编辑器：Monaco 优先，加载失败则退化为纯 textarea ----------
-  function getCode() {
-    return state.usingMonaco ? monacoEditor.getValue() : $("code-ta").value;
-  }
-  function setReady() {
-    state.editorReady = true;
-    $("btn-submit").disabled = false;
-    $("btn-hint").disabled = false;
-  }
+  // ---------- 编辑器 ----------
+  function getCode() { return state.usingMonaco ? monacoEditor.getValue() : $("code-ta").value; }
+  function setReady() { state.editorReady = true; refreshButtons(); }
   function initFallbackEditor(reason) {
-    if (state.usingMonaco) return;   // Monaco 已经起来了就别再退化，否则会把编辑器换掉
+    if (state.usingMonaco) return;
     if (!state.editorReady) console.warn("Monaco 未就绪，退化为纯文本框：", reason);
     const ta = document.createElement("textarea");
-    ta.id = "code-ta";
-    ta.value = SAMPLE;
+    ta.id = "code-ta"; ta.value = SAMPLE;
     $("editor").replaceWith(ta);
     state.usingMonaco = false;
     setReady();
@@ -173,48 +257,121 @@
   let monacoEditor = null;
   function initEditor() {
     if (!window.require) return initFallbackEditor("loader.js 未加载");
-    // 本地 AMD 构建要求显式指出 **worker** 路径，否则离线打开会卡住/报错
-    self.MonacoEnvironment = {
-      getWorkerUrl: () => "/vendor/monaco/vs/base/worker/workerMain.js"
-    };
+    self.MonacoEnvironment = { getWorkerUrl: () => "/vendor/monaco/vs/base/worker/workerMain.js" };
     require.config({ paths: { vs: "/vendor/monaco/vs" } });
-    // 兜底：8 秒还没起来才退化（已就绪则不动它）
     setTimeout(() => initFallbackEditor("加载超时"), 8000);
     try {
       require(["vs/editor/editor.main"], function () {
         if (state.editorReady) return;
         monacoEditor = monaco.editor.create($("editor"), {
           value: SAMPLE, language: "python", theme: "vs-dark",
-          automaticLayout: true, minimap: { enabled: false }, fontSize: 13,
-          // 只做语法着色：**关掉**补全/触发器，避免把 API 用法喂给学生（与"不给答案"主张一致）
+          automaticLayout: true, minimap: { enabled: false }, fontSize: 15,
+          lineHeight: 23,
+          // 只做语法着色：关掉补全/触发器，避免把 API 用法喂给学生（与"不给答案"主张一致）
           quickSuggestions: false, suggestOnTriggerCharacters: false,
           wordBasedSuggestions: "off", parameterHints: { enabled: false }
         });
         state.usingMonaco = true;
         setReady();
       }, function () { initFallbackEditor("editor.main 加载失败"); });
-    } catch (e) {
-      initFallbackEditor(e);
+    } catch (e) { initFallbackEditor(e); }
+  }
+
+  // ---------- 上下拖动分隔条（反馈变长时给下方腾地方）----------
+  function initSplitter() {
+    const work = $("work"), sp = $("splitter");
+    let dragging = false;
+    sp.addEventListener("pointerdown", (e) => {
+      dragging = true; sp.classList.add("dragging"); sp.setPointerCapture(e.pointerId);
+      document.body.style.userSelect = "none";
+    });
+    sp.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const rect = work.getBoundingClientRect();
+      const pct = ((e.clientY - rect.top) / rect.height) * 100;
+      work.style.setProperty("--edit-h", Math.min(75, Math.max(20, pct)) + "%");
+    });
+    const stop = (e) => {
+      if (!dragging) return;
+      dragging = false; sp.classList.remove("dragging");
+      document.body.style.userSelect = "";
+      if (e && e.pointerId !== undefined) { try { sp.releasePointerCapture(e.pointerId); } catch (_) {} }
+    };
+    sp.addEventListener("pointerup", stop);
+    sp.addEventListener("pointercancel", stop);
+  }
+
+  // ---------- 操作状态 / 按钮 ----------
+  function notify(kind, text, target) {
+    const el = $(target || "op-state");
+    el.className = "notice " + kind; el.textContent = text;
+  }
+  function phaseAllowsTeaching() { return !!state.question && state.question.phase === "practice"; }
+  function refreshButtons() {
+    const ready = state.editorReady && !state.busy;
+    $("btn-submit").disabled = !ready;
+    $("btn-hint").disabled = !ready || !phaseAllowsTeaching();  // 前后测：禁用而非隐藏
+    $("btn-submit").classList.toggle("busy", state.busy);
+    $("btn-hint").classList.toggle("busy", state.busy);
+  }
+  function setBusy(on, which) {
+    state.busy = on; refreshButtons();
+    if (on) {
+      notify("busy", which === "judge" ? "判题中…" : "提示生成中…", "op-msg");
+      $("btn-submit").textContent = (which === "judge") ? "提交中…" : "提交代码";
+      $("btn-hint").textContent = (which === "hint") ? "生成中…" : "请求提示";
+    } else {
+      $("btn-submit").textContent = "提交代码";
+      $("btn-hint").textContent = "请求提示";
     }
   }
 
-  // ---------- ① 组件徽标 ----------
+  // ---------- 横幅 ----------
+  function refreshBanner() {
+    const el = $("banner"), lines = [];
+    let kind = "";
+    if (state.judgeStub) { lines.push(`<b>⚠ 模拟判题</b>　${esc(STUB_NOTE)}`); kind = "stub"; }
+    if (state.question && PHASE_NOTE[state.question.phase]) {
+      lines.push(`<b>ⓘ ${esc(PHASE_LABEL[state.question.phase])}阶段</b>　${esc(PHASE_NOTE[state.question.phase])}`);
+      kind = kind || "phase";
+    }
+    el.innerHTML = lines.join("<br>");
+    el.className = "banner" + (lines.length ? " show " + kind : "");
+    $("h-judge-title").textContent = state.judgeStub ? "模拟运行结果" : "程序运行结果";
+  }
+
+  // ---------- 提示等级（只读）----------
+  function renderLevels(hintLevel, unlocked) {
+    document.querySelectorAll(".lvl-strip .lvl").forEach((el) => {
+      const n = Number(el.dataset.lvl);
+      el.classList.toggle("on", n <= unlocked);
+      el.classList.toggle("cur", n === hintLevel && hintLevel > 0);
+      el.title = n <= unlocked ? `L${n} 已解锁` : `L${n} 未解锁（需连续失败 ${n * 2} 次）`;
+    });
+  }
+
+  async function loadStatus() {
+    try { state.judgeStub = (await (await fetch("/api/status")).json()).judge === "stub"; }
+    catch (e) { state.judgeStub = false; }
+    refreshBanner();
+  }
+
   async function loadComponents() {
     try {
-      const r = await fetch("/api/components");
-      const d = await r.json();
+      const d = await (await fetch("/api/components")).json();
       $("badges").innerHTML = (d.registered || [])
         .map((n) => `<span class="badge">${esc(n)}</span>`).join("");
     } catch (e) { $("badges").innerHTML = '<span class="badge">组件未知</span>'; }
   }
+  function applyDebug() {
+    $("badges").style.display = state.debug ? "" : "none";
+    $("btn-debug").textContent = state.debug ? "调试 ✓" : "调试";
+  }
 
-  // ---------- ③ 题目 ----------
+  // ---------- 题目 ----------
   async function loadQuestionList() {
-    const r = await fetch("/api/questions");
-    const list = await r.json();
+    const list = await (await fetch("/api/questions")).json();
     if (!list.length) {
-      // 题库（data/questions/*.json）由岗位 4-A 交付；未就绪时留一个手动入口，
-      // 后端对未收录的题号会回一个占位题，链路照样能跑通。
       $("qlist").innerHTML =
         '<span class="muted">题库未就绪（岗位 4-A 交付后自动出现在这里）</span>' +
         '<div style="margin-top:8px;display:flex;gap:6px">' +
@@ -225,154 +382,192 @@
     }
     $("qlist").innerHTML = list.map((q) =>
       `<div class="q-item" data-id="${esc(q.id)}">${esc(q.id)} · ${esc(q.title)}` +
-      `<span class="muted" style="font-size:11px"> ${esc(PHASE_LABEL[q.phase] || "未标注")}</span></div>`).join("");
-    document.querySelectorAll(".q-item").forEach((el) => {
-      el.onclick = () => selectQuestion(el.dataset.id);
-    });
+      `<span class="muted" style="font-size:12px"> ${esc(PHASE_LABEL[q.phase] || "未标注")}</span></div>`).join("");
+    document.querySelectorAll(".q-item").forEach((el) => { el.onclick = () => selectQuestion(el.dataset.id); });
     selectQuestion(list[0].id);
   }
 
   async function selectQuestion(qid) {
     state.qid = qid;
-    document.querySelectorAll(".q-item").forEach((el) =>
-      el.classList.toggle("sel", el.dataset.id === qid));
+    document.querySelectorAll(".q-item").forEach((el) => el.classList.toggle("sel", el.dataset.id === qid));
     state.question = await (await fetch(`/api/questions/${encodeURIComponent(qid)}`)).json();
     const q = state.question;
     $("qdetail").innerHTML = `
-      <h3 class="sec">当前题目</h3>
-      <div><strong>${esc(q.id)} · ${esc(q.title)}</strong>
-        <span class="muted">（难度 ${esc(q.difficulty)}）</span></div>
-      <div class="muted" style="font-size:12px">阶段：${esc(q.phase || "未标注")}</div>
-      <div style="margin-top:6px;white-space:pre-wrap">${esc(q.statement)}</div>
+      <h2 class="q-title">${esc(q.id)} · ${esc(q.title)}</h2>
+      <div class="q-meta">难度 ${esc(q.difficulty)}　·　阶段 ${esc(PHASE_LABEL[q.phase] || q.phase || "未标注")}</div>
+      <h3 class="sec">题目说明</h3>
+      <div class="q-stmt">${esc(q.statement)}</div>
+      <h3 class="sec">输入输出要求</h3>
+      <div class="io-req">
+        <div><span class="k">输入</span>　读入的内容见下方示例；<b>同一行</b>内的多个数据以空格分隔。</div>
+        <div><span class="k">输出</span>　按题目说明输出结果；<b>不要</b>输出多余的文字或提示语。</div>
+      </div>
       <h3 class="sec">示例</h3>
-      ${(q.examples || []).map((e) => `<pre class="chunk">输入：${esc(e.input)}
-输出：${esc(e.output)}${e.explain ? "\n说明：" + esc(e.explain) : ""}</pre>`).join("") || '<span class="muted">无</span>'}
+      ${(q.examples || []).map((e) => `
+        <div class="ex-card">
+          <div class="row"><span class="k">输入</span><code>${esc(e.input)}</code></div>
+          <div class="row"><span class="k">输出</span><code>${esc(e.output)}</code></div>
+          ${e.explain ? `<div class="row"><span class="k">说明</span><span class="muted">${esc(e.explain)}</span></div>` : ""}
+        </div>`).join("") || '<span class="muted">无</span>'}
       <h3 class="sec">可见用例</h3>
-      ${(q.test_cases || []).map((c) => `<pre class="chunk">输入：${esc(c.input)}
-期望输出：${esc(c.expected)}</pre>`).join("") || '<span class="muted">无</span>'}`;
+      ${(q.test_cases || []).map((c) => `
+        <div class="ex-card">
+          <div class="row"><span class="k">输入</span><code>${esc(c.input)}</code></div>
+          <div class="row"><span class="k">期望</span><code>${esc(c.expected)}</code></div>
+        </div>`).join("") || '<span class="muted">无</span>'}`;
     $("st-qid").textContent = q.id;
-    $("st-phase").textContent = "阶段 " + (q.phase || "未标注");
+    $("st-phase").textContent = "阶段 " + (PHASE_LABEL[q.phase] || q.phase || "未标注");
+    refreshBanner(); refreshButtons();
+    notify("idle", phaseAllowsTeaching() ? "可提交，也可请求提示" : "当前阶段不提供 AI 提示", "op-msg");
   }
 
-  // ---------- ⑤ 渲染 ----------
-  function switchTab(name) {
-    document.querySelectorAll(".tabs button").forEach((b) =>
-      b.classList.toggle("active", b.dataset.tab === name));
-    ["judge", "hint", "trace"].forEach((t) => {
-      $("tab-" + t).style.display = (t === name) ? "" : "none";
-    });
-  }
-
+  // ---------- 左栏：程序运行结果（**结构化渲染，不复述多次 fail**）----------
+  const ERROR_TYPE_LABEL = {
+    none: "无错误", syntax: "语法错误", runtime: "运行时错误",
+    timeout: "运行超时", wrong_output: "输出不正确"
+  };
   function renderJudge(d) {
     const failed = d.failed_cases || [];
-    const lines = [`判题状态：${d.status}`];
-    // 不显示"通过 x/y"：响应里没有 total_cases / passed_cases（见技术方回执第三回 §三）
-    if (d.status === "pass") lines.push("全部可见与隐藏用例均通过。");
-    else lines.push(`未通过 ${failed.length} 个用例。`);
-    failed.forEach((c) => {
-      lines.push(`\n· 用例 #${c.case_index}${c.hidden ? "（隐藏用例，不回显输入/期望）" : ""}`);
-      if (!c.hidden) {
-        lines.push(`  输入：${c.input}`);
-        lines.push(`  期望：${c.expected}`);
+    const pass = d.status === "pass";
+    // 标题栏只给一个结论；正文里不再重复出现 `fail`／"判题状态：fail"
+    $("h-judge").textContent = pass ? "已通过" : `未通过 · ${failed.length} 个用例未通过`;
+    const parts = [];
+    if (pass) {
+      parts.push('<div>全部可见与隐藏用例均通过。</div>');
+    } else {
+      if (d.error_type) {
+        parts.push(`<div><b>错误类型</b>：${esc(ERROR_TYPE_LABEL[d.error_type] || d.error_type)}</div>`);
       }
-      lines.push(`  实际：${c.actual}`);
+      if (d.stderr) {
+        parts.push('<div style="margin-top:8px"><b>错误输出</b></div>'
+          + `<div class="muted">${esc(d.stderr)}</div>`);
+      }
+    }
+    failed.forEach((c) => {
+      parts.push(`<div class="case ${c.hidden ? "hidden" : ""}">`
+        + `<div>· 用例 #${esc(c.case_index)}${c.hidden ? "（隐藏用例，不回显输入/期望）" : ""}</div>`
+        + (c.hidden ? "" : `<div class="muted">输入：${esc(c.input)}</div>`)
+        + (c.hidden ? "" : `<div class="muted">期望：${esc(c.expected)}</div>`)
+        + `<div class="muted">实际：${esc(c.actual)}</div></div>`);
     });
-    if (d.stderr) lines.push(`\n错误输出：\n${d.stderr}`);
-    $("tab-judge").textContent = lines.join("\n");
+    if (state.debug && d.judge_feedback) {
+      parts.push('<div class="flag" style="margin-top:14px">调试：judge_feedback<br>'
+        + `${esc(d.judge_feedback)}</div>`);
+    }
+    $("tab-judge").innerHTML = parts.join("");
   }
 
+  // ---------- 右栏：AI 学习提示（**本次提示在最前**）----------
   function renderHint(d) {
+    // 头部一行：**只有已请求时才报"本次提示 L?"**。
+    // 未请求时的 0 表示"本次没有提示"，不是教学等级 L0 —— 不能显示成 L0。
+    const disabled = d.source === "phase_disabled";
+    const requested = !!d.hint_requested;
+    $("h-hint").textContent = disabled ? "本阶段不提供提示"
+      : (requested ? `本次提示 L${d.hint_level}｜已解锁至 L${d.unlocked_level}`
+                   : `已解锁至 L${d.unlocked_level}`);
     const parts = [];
-    parts.push(`<span class="hint-badge">本次展示 L${d.hint_level}</span>`
-      + `<span class="hint-badge">已解锁 L${d.unlocked_level}</span>`);
-    if (d.source === "raw_llm") {
-      // 诚实性要求：兜底回复必须显著标注
+    if (disabled) {
+      parts.push('<div class="flag">当前阶段不提供 AI 学习提示（你的提交仍会正常记录）。</div>');
+    } else if (d.source === "raw_llm") {
       parts.push('<div class="flag">⚠ 兜底回复：本次未走教学组件（source = raw_llm）</div>');
     }
-    if (d.knowledge_point) parts.push(`<div class="muted">知识点：${esc(d.knowledge_point)}</div>`);
-    if (d.memory_hint) parts.push(`<div class="muted">跨对话记忆：${esc(d.memory_hint)}</div>`);
-    parts.push(`<div style="margin-top:8px;white-space:pre-wrap">${esc(d.message)}</div>`);
+    if (state.judgeStub && d.source !== "phase_disabled") {
+      parts.push(`<div class="flag">${esc(STUB_HINT_NOTE)}</div>`);
+    }
+    // ① 本次提示（放最前，**不再重复 L?**，等级只在头部那行显示）
+    // 未请求 / 通过态各有自己的小标题，避免把"没有提示"说成"本次学习提示"
+    const head = disabled ? "阶段说明"
+      : requested ? "本次学习提示"
+      : (d.status === "pass" ? "本次反馈" : "尚未请求学习提示");
+    parts.push(`<div class="hint-text"><b>${esc(head)}</b></div>`);
+    parts.push(`<div class="hint-text">${esc(d.message)}</div>`);
+    // ② 相关知识点
+    if (d.knowledge_point) parts.push(`<div class="kp">相关知识点：${esc(d.knowledge_point)}</div>`);
+    // ③ 历史易错提醒（弱化 + 可折叠；演示数据要标明）
+    if (d.memory_hint) {
+      parts.push(`<details class="memo"><summary>历史易错提醒</summary>`
+        + `<div style="margin-top:6px">${esc(d.memory_hint)}</div>`
+        + (state.judgeStub ? '<div style="margin-top:4px">（本机演示累计，不是真实学生的学习记录）</div>' : "")
+        + `</details>`);
+    }
+    if (state.debug) {
+      const c = d.components || { executed: [], skipped: [] };
+      parts.push('<div class="flag" style="margin-top:14px">调试：组件轨迹<br>'
+        + `已执行：${esc((c.executed || []).join(" → ") || "（无）")}<br>`
+        + `被跳过：${esc((c.skipped || []).join(", ") || "（无）")}</div>`);
+    }
     $("tab-hint").innerHTML = parts.join("");
-  }
-
-  function renderTrace(d) {
-    const c = d.components || { executed: [], skipped: [] };
-    $("tab-trace").textContent =
-      `已执行组件：${(c.executed || []).join(" → ") || "（无）"}\n` +
-      `被跳过组件：${(c.skipped || []).join(", ") || "（无）"}\n`;
   }
 
   function renderStatus(d) {
     $("st-pid").textContent = $("pid").value || "（未填编号）";
-    $("st-level").textContent = `提示等级 L${d.hint_level}`;
-    $("st-unlocked").textContent = `已解锁 L${d.unlocked_level}`;
-    // log 为 null = 只看提示、未提交 → 不推进提交序号
+    renderLevels(d.hint_level, d.unlocked_level);
     const log = d.log;
-    $("st-seq").textContent = log ? `提交序号 ${log.submit_seq}` : "提交序号 —（仅请求提示，未提交）";
+    $("st-seq").textContent = log ? `提交序号 ${log.submit_seq}` : "提交序号 —（本次未提交）";
     $("st-ms").textContent = log ? `耗时 ${log.elapsed_ms} ms` : "耗时 —";
   }
-
-  function renderAll(d) {
-    renderJudge(d); renderHint(d); renderTrace(d); renderStatus(d);
-    switchTab(d.log ? "judge" : "hint");
-  }
+  function renderAll(d) { renderJudge(d); renderHint(d); renderStatus(d); }
 
   // ---------- 请求 ----------
   function baseBody() {
     const pid = ($("pid").value || "").trim();
-    if (!pid) { alert("请先填写被试编号"); throw new Error("no participant_id"); }
-    if (!state.qid) { alert("请先选择题目"); throw new Error("no question_id"); }
+    if (!pid) { notify("bad", "请先填写被试编号", "op-msg"); throw new Error("no participant_id"); }
+    if (!state.qid) { notify("bad", "请先选择题目", "op-msg"); throw new Error("no question_id"); }
     return { participant_id: pid, question_id: state.qid, code: getCode() };
   }
 
-  function setBusy(on, which) {
-    $("btn-submit").disabled = on || !state.editorReady;
-    $("btn-hint").disabled = on || !state.editorReady;
-    if (on) $("tab-" + which).textContent = "请求中…";
-  }
-
   async function submit() {
+    if (state.busy) return;                       // 防重复点击
     setBusy(true, "judge");
     try {
-      const body = baseBody();
-      body.group = GROUP;
-      body.request_hint = false;   // 提示由「请求提示」按钮单独走 /api/hint
+      const body = baseBody(); body.group = GROUP; body.request_hint = false;
       const r = await fetch("/api/submit", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
       });
-      renderAll(await r.json());
+      const d = await r.json();
+      renderAll(d);
+      notify(d.status === "pass" ? "ok" : "bad",
+        d.status === "pass" ? "提交完成：全部用例通过" : "提交完成：未通过", "op-msg");
     } catch (e) {
-      if (e.message !== "no participant_id" && e.message !== "no question_id")
+      if (e.message !== "no participant_id" && e.message !== "no question_id") {
         $("tab-judge").textContent = "请求失败：" + e;
+        $("h-judge").textContent = "请求失败";
+        notify("bad", "提交失败：网络或服务异常", "op-msg");
+      }
     } finally { setBusy(false, "judge"); }
   }
 
   async function requestHint() {
+    if (state.busy) return;
+    if (!phaseAllowsTeaching()) { notify("bad", "当前阶段不提供 AI 学习提示", "op-msg"); return; }
     setBusy(true, "hint");
     try {
-      const body = baseBody();
-      // 走独立接口：**不写 submission_log**，不虚增"提交次数"
+      const body = baseBody();   // 走独立接口：不写 submission_log，不虚增"提交次数"
       const r = await fetch("/api/hint", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
       });
       renderAll(await r.json());
-      switchTab("hint");
+      notify("ok", "提示已返回", "op-msg");
     } catch (e) {
-      if (e.message !== "no participant_id" && e.message !== "no question_id")
+      if (e.message !== "no participant_id" && e.message !== "no question_id") {
         $("tab-hint").textContent = "请求失败：" + e;
+        $("h-hint").textContent = "请求失败";
+        notify("bad", "提示请求失败：网络或服务异常", "op-msg");
+      }
     } finally { setBusy(false, "hint"); }
   }
 
   // ---------- 绑定 ----------
-  document.querySelectorAll(".tabs button").forEach((b) =>
-    b.onclick = () => switchTab(b.dataset.tab));
   $("btn-submit").onclick = submit;
   $("btn-hint").onclick = requestHint;
+  $("btn-debug").onclick = () => { state.debug = !state.debug; applyDebug(); };
   $("pid").oninput = () => { $("st-pid").textContent = $("pid").value || "（未填编号）"; };
 
+  applyDebug();
   initEditor();
+  initSplitter();
+  loadStatus();
   loadComponents();
   loadQuestionList();
 </script>

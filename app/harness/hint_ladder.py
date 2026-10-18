@@ -13,7 +13,8 @@
 被否决的口径：①"每次提交自动升一级"；②"连败 2 次即自动展示"（学生未求助就被动拿到提示）；
 ③"请求即升一级"（会让提示等级由**点击次数**驱动、与"卡住程度"脱钩，且连点 4 次即可拿到 L4）。
 
-**等级 0**：初次进入题目只给题目与判题反馈，不给任何教学提示。
+**等级 0＝"本次没有提示"**（未请求），**不是教学等级 L0**：正文只说明"怎么拿提示"，
+**不复述判题反馈**——判题反馈已由左栏「程序运行结果」与独立的 `judge_feedback` 字段承载。
 
 提示文本由大模型生成，但生成后**必须过 `leak_guard` 程序化校验**；
 校验不通过则先重试一次，仍不过则改用无模板兜底文本。
@@ -159,23 +160,29 @@ def _success_message(ctx) -> str:
 
 
 def render(ctx) -> tuple[str, str | None]:
-    """按等级产出最终呈现给学生的文本，并给出**真实生成来源**（契约 §6.2.2 的 `hint_source`）。
+    """产出**教学反馈正文**与**真实生成来源**（契约 §6.2.2 的 `hint_source`）。
 
-    返回 `(文本, 来源)`；来源取值 `llm`／`llm_retry`／`fallback`；**未使用模型时为 `None`**。
+    返回 `(正文, 来源)`；来源取值 `llm`／`llm_retry`／`fallback`；**未使用模型时为 `None`**。
+
+    **判题反馈不再拼进正文**：它写入独立的 `ctx.judge_feedback` ——
+    否则"程序运行结果"与"AI 学习提示"两栏会显示同一段错误报告（重复且误导）。
     """
     if ctx.judge_result.status == "pass":
         return _success_message(ctx), None
 
+    ctx.judge_feedback = _fail_feedback(ctx)
     if ctx.hint_level <= 0:
-        # 等级 0：只给题目与判题反馈，不给教学提示。
-        # 已解锁但学生没请求时，明确告知"已解锁 L?、可点请求"，而不是白给提示。
-        text = _fail_feedback(ctx)
+        # 等级 0＝**本次没有提示**（未请求）：正文只说"怎么拿提示"，
+        # **不复述判题反馈**（否则右栏会把左栏的报错整段抄一遍，且会被误读成 L0 提示）。
+        # 已解锁到哪一级由前端头部一行展示（`unlocked_level` 字段）。
         if ctx.unlocked_level > 0:
-            return text + f"\n\n（已解锁 L{ctx.unlocked_level} 提示；点击「请求提示」查看。）", None
-        return text + "\n\n（需要提示时，可以点「请求提示」。）", None
+            return "点击「请求提示」查看已解锁等级的提示；请求提示不会提升等级。", None
+        return ("需要提示时点「请求提示」；尚未解锁时也会先给出 L1 基础提示，"
+                "请求提示不会提升等级。"), None
 
+    # 等级 > 0：正文**只有提示本身**，判题反馈走独立字段
     hint, source = _llm_hint(ctx)
-    return _fail_feedback(ctx) + "\n\n" + hint, source
+    return hint, source
 
 
 class HintLadderComponent(TeachingComponent):

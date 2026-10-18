@@ -78,18 +78,29 @@ def test_unlock_caps_at_four():
 
 
 def test_level0_gives_no_teaching_hint():
-    """初次进入题目：只给题目与判题反馈，不给教学提示。"""
-    out, src = hl.render(_ctx(hint_level=0))
-    assert "未通过测试" in out
+    """初次进入题目：只说明"怎么拿提示"，不给教学提示，也**不复述判题结果**。
+
+    （回归 2026-10-18 笔记本验收：只提交、未请求提示时，右栏曾把判题报错整段抄了一遍。）
+    """
+    ctx = _ctx(hint_level=0)
+    out, src = hl.render(ctx)
     assert "请求提示" in out
-    assert "语法" in out
+    assert "未通过测试" not in out, "等级 0 的正文**不得**复述判题结果（判题反馈走独立字段）"
+    assert "语法" not in out, "不得复述判题 error_type"
+    assert "SyntaxError" not in out, "不得复述判题 stderr"
+    assert "L0" not in out, "0 表示本次没有提示，不是教学等级 L0"
     assert src is None, "等级 0 不使用模型，来源应为 None"
+    # 判题反馈仍**单独**产出，供左栏「程序运行结果」使用
+    assert ctx.judge_feedback and "语法" in ctx.judge_feedback
 
 
-def test_level0_tells_student_what_is_unlocked():
-    """已解锁但没请求：只提示"已解锁 L?、可点请求"，不给提示正文。"""
-    out, _src = hl.render(_ctx(hint_level=0, unlocked_level=2))
-    assert "已解锁 L2" in out
+def test_level0_unlocked_still_only_tells_how_to_ask():
+    """已解锁但没请求：不展示提示正文，也**不复述判题**；等级移交给前端头部一行展示。"""
+    ctx = _ctx(hint_level=0, unlocked_level=2)
+    out, _src = hl.render(ctx)
+    assert "请求提示" in out
+    assert "未通过测试" not in out
+    assert ctx.unlocked_level == 2
 
 
 def test_hint_passes_through_when_clean(monkeypatch):

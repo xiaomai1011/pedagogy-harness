@@ -246,6 +246,9 @@ def test_phase_gating_three_entries(monkeypatch, phase):
     assert out1["message"] == pipeline_mod.PHASE_DISABLED_MESSAGE
     assert out1["hint_level"] == 0 and out1["memory_hint"] == ""
     assert out1["error_class"] == "" and out1["knowledge_point"] == ""
+    assert out1["judge_feedback"] == "", "前后测的 judge_feedback 必须为空串（不携带教学诊断）"
+    # `error_type` 是**执行层客观判题信息**（≠ 教学诊断），前后测仍可返回给学生看
+    assert out1["error_type"] == "runtime"
 
     # ② 提交带提示：仍判题、仍记提交；提示事件记 phase_disabled；关联要一致
     pid2 = f"T_EV_{phase.upper()}_2"
@@ -456,3 +459,49 @@ def test_internal_error_is_not_recorded_as_model_error(monkeypatch):
     assert teaching["reason_code"] == "internal_error", \
         f"应记 internal_error，实际 {teaching['reason_code']}"
     assert teaching["status"] == "partial", "第 2 步已提交 → 按进度记 partial"
+
+
+# ---------------------------------------------------------------- 两个反馈区不得互相复述
+
+def test_judge_feedback_is_a_separate_field_from_hint(monkeypatch):
+    """AI 提示栏**不得复述**判题结果：提示正文与判题反馈必须是**两个独立字段**。"""
+    monkeypatch.setattr(pipeline_mod, "judge", _judge_fail)
+    monkeypatch.setattr(llm_mod, "llm", _stub_llm("先确认输入怎么读。"))
+    pid = "T_EV_FIELDS_1"
+
+    out = pipeline_mod.handle_hint_request(participant_id=pid, question_id="P001",
+                                           code="print(1)", config=PRESETS["exp"])
+
+    assert "先确认输入怎么读。" in out["message"], "AI 栏应拿到提示正文"
+    assert "未通过测试" not in out["message"], "提示正文**不得**复述判题结果"
+    assert "未通过测试" in out["judge_feedback"], "判题反馈必须是**独立字段**"
+    assert out["judge_feedback"] != out["message"]
+    assert out["error_type"] == "runtime", "左栏还需要**结构化**的 error_type，不必抠字符串"
+
+
+def test_plain_submit_without_hint_does_not_restate_judge(monkeypatch):
+    """回归（笔记本验收 2026-10-18）：**只提交、未请求提示**时，
+
+    AI 栏不得复述判题报错，也不得把"本次没有提示"当成教学等级 L0 来展示。
+    判题信息应当只出现在**左栏**（`error_type`／`stderr`／`judge_feedback`）。
+    """
+    monkeypatch.setattr(pipeline_mod, "judge", _judge_fail)
+    monkeypatch.setattr(llm_mod, "llm", _stub_llm())
+    pid = "T_EV_NOASK_1"
+
+    out = pipeline_mod.handle_submission(participant_id=pid, question_id="P001",
+                                         code="print(1)", config=PRESETS["exp"])
+
+    assert out["hint_requested"] == 0, "普通提交没有请求提示"
+    assert out["hint_level"] == 0, "没有请求 → 本次不展示提示"
+    # AI 栏正文：只说明怎么拿提示
+    assert "请求提示" in out["message"]
+    assert "未通过测试" not in out["message"], "不得复述判题结论"
+    assert "runtime" not in out["message"], "不得复述判题 error_type"
+    assert "NameError" not in out["message"], "不得复述判题 stderr"
+    assert "L0" not in out["message"]
+    # 判题信息仍在**独立**字段里，左栏照常显示
+    assert out["error_type"] == "runtime"
+    assert "NameError" in out["stderr"]
+    assert "未通过测试" in out["judge_feedback"]
+    assert out["judge_feedback"] != out["message"]

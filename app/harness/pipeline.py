@@ -400,6 +400,9 @@ def _response(ctx, result, *, log_payload: dict | None, meta: dict | None = None
         "status": result.status if result is not None else "phase_disabled",
         "failed_cases": result.failed_cases if result is not None else [],
         "stderr": result.stderr if result is not None else "",
+        # 执行层错误类型（`pass/fail` 之外的**结构化**字段）：前端用它渲染"错误类型：运行时错误"，
+        # 不必再去抠 `judge_feedback` 的字符串
+        "error_type": result.error_type if result is not None else "",
         # 前后测**不只藏顶层**：`log` 里的教学诊断同样要剥掉（口径 Q5）
         "error_class": "" if phase_disabled else getattr(ctx.classification, "error_class", "未分类"),
         "knowledge_point": "" if phase_disabled else getattr(ctx.classification, "knowledge_point", ""),
@@ -408,6 +411,8 @@ def _response(ctx, result, *, log_payload: dict | None, meta: dict | None = None
         "hint_requested": 1 if ctx.request_hint else 0,
         "memory_hint": "" if phase_disabled else ctx.memory_hint,
         "message": ctx.message,
+        # **判题反馈独立字段**：前端"程序运行结果"栏用它，AI 提示栏只渲染 `message`（不再重复）
+        "judge_feedback": "" if phase_disabled else ctx.judge_feedback,
         "source": ctx.source,
         "components": {"executed": ctx.executed, "skipped": ctx.skipped},
         "log": _student_log(log_payload, phase_disabled=phase_disabled),
@@ -417,11 +422,12 @@ def _response(ctx, result, *, log_payload: dict | None, meta: dict | None = None
 def _disabled_response(*, hint_requested: bool) -> dict:
     """前后测**纯提示**的提前返回：不判题、不调模型、不给教学提示。"""
     return {
-        "status": "phase_disabled", "failed_cases": [], "stderr": "",
+        "status": "phase_disabled", "failed_cases": [], "stderr": "", "error_type": "",
         "error_class": "", "knowledge_point": "",
         "hint_level": 0, "unlocked_level": 0,
         "hint_requested": 1 if hint_requested else 0,
-        "memory_hint": "", "message": PHASE_DISABLED_HINT_MESSAGE, "source": "phase_disabled",
+        "memory_hint": "", "message": PHASE_DISABLED_HINT_MESSAGE, "judge_feedback": "",
+        "source": "phase_disabled",
         "components": {"executed": [], "skipped": []}, "log": None,
     }
 

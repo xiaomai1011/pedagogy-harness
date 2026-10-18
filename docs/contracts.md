@@ -499,7 +499,7 @@ CREATE INDEX IF NOT EXISTS idx_event_type_ts    ON event_log(event_type, ts_star
 | 与提交表的关联方式 | §6.6（`submission_id` 关联 ＋ 回填时机） |
 | 哪些入口写入 | `§6.4`（含 `phase_disabled`）＋ §6.5（纯提示分支） |
 | 重试／失败／禁用如何记录 | §6.3 四条硬规则 ＋ §6.2.4 码表 |
-| 是否影响原响应 | **不影响**：`/api/submit` 与 `/api/hint` 现有响应字段不变；`event_id`／`request_id` **不回传前端** |
+| 是否影响原响应 | **新增两个只读展示字段**（`/api/submit` 与 `/api/hint` 都有）：<br>· **`judge_feedback`** ＝ 判题反馈文本（状态＋错误类型＋报错），与**教学提示正文** `message` **分开**，避免"程序运行结果"与"AI 学习提示"两栏互相复述；<br>· **`error_type`** ＝ 执行层错误类型（`none`／`syntax`／`runtime`／`timeout`／`wrong_output`），供前端结构化渲染。<br>**两者都不回传 `event_id`／`request_id`**；**前后测阶段 `judge_feedback` 恒为空串**（不携带教学诊断）；**F（隐藏信息过滤）必须覆盖这两个新增输出字段** |
 | 保留与删除规则 | §6.9 |
 | 幂等迁移与旧库兼容 | §6.8 |
 | 未动项 | `§1` `error_type`／`stderr` 红线、`§3` 16 列语义、`§4` 错误记忆表结构、岗位③判题器接口 |

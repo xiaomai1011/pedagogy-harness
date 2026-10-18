@@ -71,6 +71,26 @@ def api_components() -> dict:
     return {"registered": registry.names()}
 
 
+@app.get("/api/status")
+def api_status() -> dict:
+    """前端**展示**用：判题器当前是"真实现"还是"桩"。
+
+    判据是**只读**的：看 `app/judge/runner.py` 的 `judge()` 源码里是否仍带桩标记——
+    **不执行判题**（在 GET 上真跑学生代码既慢又危险），也**不改**岗位③的文件。
+    """
+    import inspect
+
+    from app.judge import runner
+
+    try:
+        src = inspect.getsource(runner.judge)
+    except Exception:
+        src = ""
+    stub = "桩" in src
+    return {"judge": "stub" if stub else "real",
+            "note": "当前为模拟判题，结果不代表真实代码执行。" if stub else ""}
+
+
 @app.get("/api/questions/{question_id}")
 def api_question(question_id: str) -> dict:
     q = load_question(question_id)
