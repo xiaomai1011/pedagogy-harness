@@ -8,6 +8,10 @@
     PH_LLM_BASE_URL   中转站 / OpenAI 兼容接口地址（通常以 /v1 结尾）
     PH_LLM_API_KEY    密钥
     PH_LLM_MODEL      模型名
+    PH_LLM_REASONING_EFFORT
+                      可选。思考强度；**留空＝不发送该参数**（代码默认即留空）。
+                      **未配置时兼容原调用方式；显式启用该参数时，必须使用
+                      经验证支持它的 SDK 与服务端**——见下方 DEFAULT_REASONING_EFFORT 注释。
 
 ⚠️ 严禁把真实 Key 写进代码、聊天记录或任何提交。
 """
@@ -26,6 +30,37 @@ DEFAULT_TEMPERATURE = 0.2
 # 上限太低会把 token 耗在思考上、正文被截成空串（实测 step-3.7-flash 在 800 下
 # JSON 可解析率仅 33%、content 为空；提到 3000 后为 100%）。见 tools/model_probe.py。
 DEFAULT_MAX_TOKENS = 3000
+# 思考强度：**默认不发送** `reasoning_effort`，即使用服务端的默认行为。
+#
+# 为什么默认不发：① 保留旧 SDK 兼容性——该参数在 openai SDK **1.60.0** 才进入
+# `chat.completions.create()` 签名（1.30.0–1.55.0 均无此参数、也没有 **kwargs 兜底，
+# 传了会 TypeError）；requirements.txt 的 `openai>=1.30` 下限因此仍然有效。
+# ② 「不发送」只是**采用服务端默认**，不代表「开启思考」，不该由客户端替服务端假定。
+#
+# ⚠️ **兼容性的边界（部署说明，勿省略）**：
+# 「默认不发送」解决的是**旧配置下的兼容**，**不是「启用参数后也兼容」**。
+# 若另一台机器装的是依赖范围允许的旧版 SDK（如 1.30–1.55），**即使只设
+# `PH_LLM_REASONING_EFFORT=none` 也会因不支持该参数而报错**。
+# ⇒ 口径：**未配置时兼容原调用方式；显式启用该参数时，必须使用经验证支持它的
+# SDK 与服务端组合。**
+#
+# ⚠️ 另需注意：「签名里有该参数」**不等于**该版本正式支持 `"none"` 这个取值，
+# 也**不等于**中转站会执行它。本项目目前的在线观察只支持
+# **「当前安装版本（openai 3.31.0）＋当前中转站」**这一组合，
+# **不能外推到所有 `>=1.60` 的版本或别的中转站**；换机部署时须一并记录版本并复核。
+#
+# 已观察到的事实（**限定范围**）：在**当前中转站、当前模型别名**下，对本批**分类请求**
+# 发送 `reasoning_effort="none"` 时延迟较低（均值 1133ms vs 不发送 1821ms，n=12），
+# 且返回的 reasoning 字段为空。**不能**推广成「所有提示任务都稳定快约 38%」；
+# reasoning 字段为空**不等于**证明服务内部完全没有推理；更**不等于**提示分级更合理。
+#
+# 两批小样本的 L4 首次规则通过率方向**不一致**（n=10 为 10/10 vs 7/10，n=3 为 33% vs 100%），
+# 故**两批数字都保留**，且**不作为教学质量优劣的证据**——首次通过防泄规则 ≠ 提示正确、
+# 分级合理或对学生有帮助。这些维度须待真实判题接通后用固定样例审核。
+#
+# 需要显式启用时，由**本机配置**选择：`PH_LLM_REASONING_EFFORT=none`。
+# 设为**空字符串**同样表示不发送（用于 A/B 对比，不需要改代码）。
+DEFAULT_REASONING_EFFORT = ""
 
 
 def is_configured() -> bool:
@@ -51,6 +86,18 @@ def is_expected_failure(exc: BaseException) -> bool:
     return type(exc).__name__ in _EXPECTED_FAILURE_NAMES
 
 
+def _reasoning_effort() -> str | None:
+    """本次调用要发送的 `reasoning_effort`；`None` 表示**不发送该参数**。
+
+    默认取 `DEFAULT_REASONING_EFFORT`（当前为**空串 ⇒ 不发送**，见上方说明）。
+    环境变量 `PH_LLM_REASONING_EFFORT` 可覆盖；显式设为空串即不发送，
+    设为 `none`／`low` 等则发送——用于「有思考 / 无思考」的 A/B 对比。
+    """
+    raw = os.environ.get("PH_LLM_REASONING_EFFORT")
+    value = DEFAULT_REASONING_EFFORT if raw is None else raw.strip()
+    return value or None
+
+
 def llm(system: str, user: str, *, temperature: float = DEFAULT_TEMPERATURE,
         max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     """按 system/user 调用大模型，返回纯文本。
@@ -69,6 +116,10 @@ def llm(system: str, user: str, *, temperature: float = DEFAULT_TEMPERATURE,
         base_url=os.environ["PH_LLM_BASE_URL"],
         timeout=60,
     )
+    kwargs: dict = {}
+    effort = _reasoning_effort()
+    if effort is not None:
+        kwargs["reasoning_effort"] = effort
     resp = client.chat.completions.create(
         model=os.environ["PH_LLM_MODEL"],
         messages=[
@@ -77,5 +128,6 @@ def llm(system: str, user: str, *, temperature: float = DEFAULT_TEMPERATURE,
         ],
         temperature=temperature,
         max_tokens=max_tokens,
+        **kwargs,
     )
     return (resp.choices[0].message.content or "").strip()
