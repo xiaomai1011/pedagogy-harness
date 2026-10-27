@@ -29,6 +29,9 @@ from app.harness import redaction
 from app.harness import registry
 from app.harness.base import SubmissionContext
 from app.harness.config_switch import ERROR_CLASSIFIER, PRESETS, HarnessConfig
+# `judge` 不再由管线直接调用（改走 `isolation.guarded_execute` 的执行适配器边界）：
+# 保留这个导入，是因为测试与运维工具用 `pipeline.judge` 作为**可替换的判题实现引用**，
+# 也是「管线是否直连宿主判题」的静态检查点。**不要**在 `_pipeline()` 里直接调用它。
 from app.judge import judge
 from app.questions import load_question
 
@@ -180,9 +183,13 @@ def _mark_judge_failure(exec_event_id: int, hint_event_id: int | None,
     """
     now = _now()
     code = isolation.reason_code_of(exc)
+    # 「未执行」与「执行中异常中止」必须可区分（评阅 m00742 第 4 点）：
+    # precheck = 检查未通过，学生代码一次都没启动；executing = 已进入隔离环境后中止。
+    stage = getattr(exc, "stage", "precheck")
     db.update_event(exec_event_id, status="aborted", ts_end=now,
                     elapsed_ms=_elapsed_ms(ts, now),
-                    reason_code=code, reason=_reason_text(exc))
+                    reason_code=code, reason=_reason_text(exc),
+                    progress="isolation_aborted" if stage == "executing" else "")
     if isinstance(exc, isolation.IsolationUnavailable):
         _record_isolation_unavailable(exec_event_id, exc, ts)
     if hint_event_id is not None:
@@ -335,7 +342,14 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
         event_type="execution", request_id=request_id, participant_id=participant_id,
         question_id=question_id, phase=phase, entry=entry, ts_start=ts, status="started")
     try:
-        result = judge(question, code)
+        # **安全门**：判题只在执行适配器（隔离环境）就绪时才发生。
+        # 未登记适配器 ⇒ `guarded_execute` 直接抛 `IsolationUnavailable`，
+        # `judge()` 与学生子进程**一次都不会启动**（fail closed，不回退宿主 subprocess）。
+        result = isolation.guarded_execute(
+            isolation.registered_execution_adapter(),
+            {"question": question, "code": code, "language": "python"},
+            request_id=request_id, phase=phase,
+        )
     except Exception as exc:
         _mark_judge_failure(exec_event_id, hint_event_id, exc, ts)
         raise

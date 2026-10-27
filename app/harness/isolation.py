@@ -127,9 +127,13 @@ class IsolationUnavailable(RuntimeError):
     `detail` 再期待它被记住（契约 §6.8）。
     """
 
-    def __init__(self, detail_code: str = "not_ready", detail: str = ""):
+    def __init__(self, detail_code: str = "not_ready", detail: str = "",
+                 stage: str = "precheck"):
         self.detail_code = normalize_detail_code(detail_code) or "not_ready"
         self.detail = detail or ""
+        #: 拒绝发生在哪一段：`precheck`（检查未通过、**学生代码一次都没启动**）
+        #: 或 `executing`（已进入隔离环境后中止）。管线据此区分「未执行」与「执行中异常中止」。
+        self.stage = stage if stage in ("precheck", "executing") else "precheck"
         super().__init__(f"隔离不可用：{self.detail_code}")
 
 
@@ -174,22 +178,58 @@ class ExecutionAdapter:
         raise NotImplementedError
 
 
+#: 进程内**唯一**的执行适配器登记位。生产进程默认 **None**（未接入 ⇒ 一律拒绝执行）。
+_ADAPTER = None
+
+
+def register_execution_adapter(adapter) -> None:
+    """登记执行适配器（VM agent 接入后由启动代码调用一次）。
+
+    **未登记 = 隔离未就绪**：管线会抛 `IsolationUnavailable("not_ready")` 并拒绝执行，
+    绝不回退到宿主上的普通 `subprocess`（G-② §3.8）。
+    """
+    global _ADAPTER
+    _ADAPTER = adapter
+
+
+def registered_execution_adapter():
+    """当前登记的适配器；未登记返回 `None`。"""
+    return _ADAPTER
+
+
+def clear_execution_adapter() -> None:
+    """撤销登记（测试用；生产进程不应调用）。"""
+    global _ADAPTER
+    _ADAPTER = None
+
+
 def guarded_execute(adapter, payload, *, request_id: str = "", phase: str = "",
                     case_index: int | None = None):
     """**执行适配器边界：先检查、后启动。**
 
-    1. 调 `adapter.check_isolation()`；
-    2. 未就绪（抛 `IsolationUnavailable`，或返回假值）⇒ 立刻抛 `IsolationUnavailable`，
+    1. `adapter` 为 `None` ⇒ 取已登记的适配器；仍为 `None` ⇒ 立即抛
+       `IsolationUnavailable("not_ready")`（**fail closed**：没接隔离就不执行）；
+    2. 调 `adapter.check_isolation()`；
+    3. 未就绪（抛 `IsolationUnavailable`，或返回假值）⇒ 立刻抛 `IsolationUnavailable`，
        且 `adapter.start()` **一次都不会被调用**；
-    3. 就绪 ⇒ 返回 `adapter.start(payload)` 的结果。
+    4. 就绪 ⇒ 返回 `adapter.start(payload)` 的结果；`start()` 期间抛出的
+       `IsolationUnavailable` 会被标记 `stage="executing"`（已进入隔离环境后中止）。
 
     `request_id`／`phase`／`case_index` 只作**关联上下文**，本函数不写库
     （运行记录的写入方仍待负责人裁定）。
     """
+    if adapter is None:
+        adapter = registered_execution_adapter()
+    if adapter is None:
+        raise IsolationUnavailable("not_ready", "未登记执行适配器：隔离环境尚未接入")
     ready = adapter.check_isolation()
     if not ready:
         raise IsolationUnavailable("not_ready", "隔离设施未就绪")
-    return adapter.start(payload)
+    try:
+        return adapter.start(payload)
+    except IsolationUnavailable as exc:
+        exc.stage = "executing"
+        raise
 
 
 def new_run_id() -> str:

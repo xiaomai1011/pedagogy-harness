@@ -226,6 +226,8 @@
     qid: null, question: null, editorReady: false, usingMonaco: false,
     debug: false,           // 学生模式默认**收起**开发调试信息
     judgeStub: false,       // 服务端探测：判题器是否仍为桩
+    isolationReady: true,   // 服务端探测：安全执行适配器是否已登记（未登记 ⇒ 提交会被拒绝）
+    isolationNote: "",      // 未就绪时服务端给出的说明
     busy: false
   };
   const PHASE_LABEL = { pretest: "前测", practice: "练习", posttest: "后测" };
@@ -331,6 +333,12 @@
     const el = $("banner"), lines = [];
     let kind = "";
     if (state.judgeStub) { lines.push(`<b>⚠ 模拟判题</b>　${esc(STUB_NOTE)}`); kind = "stub"; }
+    if (!state.isolationReady) {
+      // 安全门：未接入隔离执行环境时，服务端会拒绝判题；提前讲清"不会在你的电脑上跑代码"
+      lines.push('<b>⚠ 判题环境未就绪</b>　本次部署尚未接入安全执行环境，'
+        + '提交会被拒绝并记录为"未执行"，不会运行任何学生代码。');
+      kind = kind || "stub";
+    }
     if (state.question && PHASE_NOTE[state.question.phase]) {
       lines.push(`<b>ⓘ ${esc(PHASE_LABEL[state.question.phase])}阶段</b>　${esc(PHASE_NOTE[state.question.phase])}`);
       kind = kind || "phase";
@@ -351,8 +359,16 @@
   }
 
   async function loadStatus() {
-    try { state.judgeStub = (await (await fetch("/api/status")).json()).judge === "stub"; }
-    catch (e) { state.judgeStub = false; }
+    try {
+      const s = await (await fetch("/api/status")).json();
+      state.judgeStub = s.judge === "stub";
+      state.isolationReady = s.isolation !== "not_configured";
+      state.isolationNote = s.isolation_note || "";
+    } catch (e) {
+      state.judgeStub = false;
+      state.isolationReady = true;   // 探测失败不误报：真正的拒绝文案由提交接口返回
+      state.isolationNote = "";
+    }
     refreshBanner();
   }
 
@@ -427,6 +443,14 @@
     timeout: "运行超时", wrong_output: "输出不正确"
   };
   function renderJudge(d) {
+    if (d.status === "judge_unavailable") {
+      // 安全门拒判：**不是**判题失败，也不是 runtime error —— 单独一种结论
+      $("h-judge").textContent = "判题环境未就绪";
+      $("tab-judge").innerHTML =
+        '<div class="flag">⚠ 本次提交<b>没有执行判题</b>，也没有在你的电脑上启动任何学生代码。</div>'
+        + `<div class="muted">${esc(d.message || state.isolationNote || "")}</div>`;
+      return;
+    }
     const failed = d.failed_cases || [];
     const pass = d.status === "pass";
     // 标题栏只给一个结论；正文里不再重复出现 `fail`／"判题状态：fail"
@@ -462,6 +486,15 @@
 
   // ---------- 右栏：AI 学习提示（**本次提示在最前**）----------
   function renderHint(d) {
+    if (d.status === "judge_unavailable") {
+      // 同一道安全门：提示请求也被拒绝，**没调模型、没起进程**
+      $("h-hint").textContent = "判题环境未就绪";
+      $("tab-hint").innerHTML =
+        '<div class="flag">⚠ 本次请求<b>没有生成学习提示</b>：判题环境未就绪，'
+        + '服务端未执行任何学生代码。</div>'
+        + `<div class="muted">${esc(d.message || state.isolationNote || "")}</div>`;
+      return;
+    }
     // 头部一行：**只有已请求时才报"本次提示 L?"**。
     // 未请求时的 0 表示"本次没有提示"，不是教学等级 L0 —— 不能显示成 L0。
     const disabled = d.source === "phase_disabled";
@@ -530,8 +563,12 @@
       });
       const d = await r.json();
       renderAll(d);
-      notify(d.status === "pass" ? "ok" : "bad",
-        d.status === "pass" ? "提交完成：全部用例通过" : "提交完成：未通过", "op-msg");
+      if (d.status === "judge_unavailable") {
+        notify("bad", "提交未执行：判题环境未就绪", "op-msg");
+      } else {
+        notify(d.status === "pass" ? "ok" : "bad",
+          d.status === "pass" ? "提交完成：全部用例通过" : "提交完成：未通过", "op-msg");
+      }
     } catch (e) {
       if (e.message !== "no participant_id" && e.message !== "no question_id") {
         $("tab-judge").textContent = "请求失败：" + e;
