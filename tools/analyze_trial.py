@@ -9,7 +9,9 @@
 
 - ``trial_participants.csv`` ：**一人一行**，前测/练习/后测的题数、完成数、通过数，
   提交次数、提示次数与等级/来源、错误类型分布、判题与模型耗时、缺失与未完成题目；
-- ``trial_summary.md`` ：同样内容的表格版摘要，并写明口径与分母。
+- ``trial_questions.csv`` ：**一题一行**，尝试会话数、提交数、提交通过率、首次通过/最终通过会话数；
+- ``trial_prepost.csv`` ：**只含同时做了前测与后测的会话**，前测通过/尝试、后测通过/尝试、变化题数与变化率；
+- ``trial_summary.md`` ：表格版摘要，含“成功率（按题）”与“前后测对比”两节，并写明口径与分母。
 
 ## 口径（不要按列名想当然）
 
@@ -154,6 +156,83 @@ def analyze_participant(pid: str, subs: list[dict], hints: list[dict], plan, rul
     return out
 
 
+def question_stats(subs: list[dict], plan) -> list[dict]:
+    """按题目统计成功率：提交通过率、首次提交通过、最终通过（按会话计）。"""
+    phase_of = {q: p for p in PHASES for q in plan.get(p, [])}
+    by_q: dict[str, list[dict]] = {}
+    for row in subs:
+        by_q.setdefault(row.get("question_id", ""), []).append(row)
+
+    out: list[dict] = []
+    for qid, rows in sorted(by_q.items()):
+        ordered = sorted(rows, key=lambda r: (as_int(r.get("submit_seq")), r.get("ts") or ""))
+        per_session: dict[str, list[dict]] = {}
+        for row in ordered:
+            per_session.setdefault(row.get("participant_id", ""), []).append(row)
+        first_pass = len([1 for rs in per_session.values() if as_int(rs[0].get("pass_status")) == 1])
+        eventual = len([1 for rs in per_session.values()
+                        if any(as_int(x.get("pass_status")) == 1 for x in rs)])
+        passed_submits = len([1 for row in rows if as_int(row.get("pass_status")) == 1])
+        out.append({
+            "question_id": qid,
+            "phase": phase_of.get(qid, ""),
+            "sessions_attempted": len(per_session),
+            "submissions": len(rows),
+            "passed_submissions": passed_submits,
+            "first_try_pass_sessions": first_pass,
+            "eventual_pass_sessions": eventual,
+            "submit_pass_rate": round(passed_submits / len(rows), 3) if rows else "",
+            "first_try_rate": round(first_pass / len(per_session), 3) if per_session else "",
+            "eventual_rate": round(eventual / len(per_session), 3) if per_session else "",
+        })
+    return out
+
+
+def prepost_stats(subs: list[dict], plan) -> tuple[list[dict], dict]:
+    """前后测对比：只统计**同时做了**前测和后测的会话，按题计分（至少通过一次）。"""
+    pre_qs, post_qs = set(plan.get("pretest", [])), set(plan.get("posttest", []))
+    seen: dict[str, dict] = {}
+    for row in subs:
+        qid = row.get("question_id", "")
+        if qid not in pre_qs and qid not in post_qs:
+            continue
+        bucket = "pre" if qid in pre_qs else "post"
+        slot = seen.setdefault(row.get("participant_id", ""), {"pre": {}, "post": {}})[bucket]
+        item = slot.setdefault(qid, {"any": False})
+        if as_int(row.get("pass_status")) == 1:
+            item["any"] = True
+
+    rows: list[dict] = []
+    for pid, data in sorted(seen.items()):
+        pre, post = data["pre"], data["post"]
+        if not pre or not post:
+            continue
+        pre_pass = len([1 for v in pre.values() if v["any"]])
+        post_pass = len([1 for v in post.values() if v["any"]])
+        rows.append({
+            "participant_id": pid,
+            "pretest_attempted": len(pre), "pretest_passed": pre_pass,
+            "pretest_rate": round(pre_pass / len(pre), 3),
+            "posttest_attempted": len(post), "posttest_passed": post_pass,
+            "posttest_rate": round(post_pass / len(post), 3),
+            "delta_passed": post_pass - pre_pass,
+            "delta_rate": round(post_pass / len(post) - pre_pass / len(pre), 3),
+        })
+
+    summary = {
+        "sessions_with_both": len(rows),
+        "sessions_pre_only": len([1 for d in seen.values() if d["pre"] and not d["post"]]),
+        "sessions_post_only": len([1 for d in seen.values() if d["post"] and not d["pre"]]),
+        "improved": len([1 for r in rows if r["delta_passed"] > 0]),
+        "unchanged": len([1 for r in rows if r["delta_passed"] == 0]),
+        "worse": len([1 for r in rows if r["delta_passed"] < 0]),
+    }
+    if rows:
+        summary["mean_delta_rate"] = round(statistics.mean(r["delta_rate"] for r in rows), 3)
+        summary["median_delta_rate"] = round(statistics.median(r["delta_rate"] for r in rows), 3)
+    return rows, summary
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="小规模试用逐人描述性分析（只读 CSV）")
     parser.add_argument("--export", required=True, help="export_experiment_data.py 的输出目录")
@@ -177,6 +256,7 @@ def main(argv=None) -> int:
         participants = sorted(set(participants) | {r.get("participant_id", "") for r in roster if r.get("participant_id")})
 
     rows = [analyze_participant(pid, subs, hints, plan, args.rule) for pid in participants]
+    qstats = question_stats(subs, plan)
 
     if args.mode == "free":
         columns = ["participant_id", "questions_attempted", "questions_passed", "submissions",
@@ -206,11 +286,65 @@ def main(argv=None) -> int:
         for row in rows:
             writer.writerow({k: cell(row.get(k, "")) for k in columns})
 
+    qrows = question_stats(subs, plan)
+    prows, psum = prepost_stats(subs, plan)
+
+    q_csv = export_dir / "trial_questions.csv"
+    q_fields = ["question_id", "phase", "sessions_attempted", "submissions", "passed_submissions",
+                "first_try_pass_sessions", "eventual_pass_sessions",
+                "submit_pass_rate", "first_try_rate", "eventual_rate"]
+    with q_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=q_fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(qrows)
+
+    p_csv = export_dir / "trial_prepost.csv"
+    p_fields = ["participant_id", "pretest_attempted", "pretest_passed", "pretest_rate",
+                "posttest_attempted", "posttest_passed", "posttest_rate", "delta_passed", "delta_rate"]
+    with p_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=p_fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(prows)
+
+    def success_lines():
+        out = ["", "## 成功率（按题，描述性）"]
+        total = len(subs)
+        passed = len([1 for r in subs if as_int(r.get("pass_status")) == 1])
+        out.append(f"- 提交通过率：**{passed}/{total}**" + (f" = {passed / total * 100:.1f}%" if total else ""))
+        tried = len(qrows)
+        ever = len([1 for q in qrows if q["eventual_pass_sessions"] > 0])
+        firstq = len([1 for q in qrows if q["first_try_pass_sessions"] > 0])
+        out.append(f"- 被尝试的题目：{tried} 题；至少通过一次：**{ever}/{tried}**；首次提交即通过：**{firstq}/{tried}**")
+        out += ["", "| 题目 | 阶段 | 尝试会话 | 提交 | 提交通过率 | 首次通过会话 | 最终通过会话 |",
+                "|---|---|---|---|---|---|---|"]
+        for q in qrows:
+            rate = q["submit_pass_rate"]
+            rate_text = "" if rate == "" else f"{rate * 100:.0f}%"
+            out.append(f"| {q['question_id']} | {PHASE_LABEL.get(q['phase'], q['phase'] or '—')} "
+                       f"| {q['sessions_attempted']} | {q['submissions']} | {rate_text} "
+                       f"| {q['first_try_pass_sessions']} | {q['eventual_pass_sessions']} |")
+        out += ["", "## 前后测对比（只含同时做了前测与后测的会话）",
+                f"- 同时做了前后测的会话：**{psum['sessions_with_both']}**；只做前测 {psum['sessions_pre_only']}，"
+                f"只做后测 {psum['sessions_post_only']}（不进入对比）。"]
+        if prows:
+            out.append(f"- 至少通过一次（按题计）变化：提升 {psum['improved']}、不变 {psum['unchanged']}、"
+                       f"下降 {psum['worse']}；平均变化率 {psum['mean_delta_rate']:+.0%}，中位 {psum['median_delta_rate']:+.0%}。")
+            out += ["", "| 会话 | 前测通过/尝试 | 后测通过/尝试 | 变化(题) | 变化率 |", "|---|---|---|---|---|"]
+            for r in prows:
+                out.append(f"| {r['participant_id']} | {r['pretest_passed']}/{r['pretest_attempted']} "
+                           f"| {r['posttest_passed']}/{r['posttest_attempted']} | {r['delta_passed']:+d} "
+                           f"| {r['delta_rate']:+.0%} |")
+        else:
+            out.append("- 目前没有哪个会话同时提交过前测与后测，暂无可比对的配对数据。")
+        out += ["", "> 这不是随机分组、没有对照组，前后测之间还夹着自由练习，题目难度也不同；"
+                    "上面的差值只能描述“观察到的情况”，不能当作教学效果或因果结论。"]
+        return out
+
     if args.mode == "free":
         lines = ["# 自由体验使用记录（描述性）", ""]
         lines.append("- 按**匿名会话**汇总：**会话数不等于参与人数**（换浏览器、清 Cookie、重装会生成新会话）。")
         lines.append("- 不要求统一题量或顺序；没出现的题目只是没做，**不记为缺考或失败**。")
-        lines.append("- 本表**不计算前后测得分或变化**，也不做显著性检验。")
+        lines.append("- 下方\"成功率\"与\"前后测对比\"同样是描述性指标，不做显著性检验、不当作教学效果证据。")
         lines.append("- `judge_ms` 是判题执行耗时、`model_ms` 是模型调用耗时，二者都不是作答时间。")
         lines.append("")
         lines.append("| 会话编号 | 尝试题目 | 通过题目 | 提交 | 提示次数 | 最高等级 | 判题耗时(ms) | 模型耗时(ms) | 判题故障 | 首次提交 | 最近提交 |")
@@ -228,6 +362,7 @@ def main(argv=None) -> int:
         lines.append(f"- 有提交的会话：{len([r for r in rows if r['submissions'] > 0])}；提交合计 {sum(r['submissions'] for r in rows)} 次。")
         lines.append(f"- 使用过提示的会话：{len([r for r in rows if r['hint_requests'] > 0])}；提示请求合计 {sum(r['hint_requests'] for r in rows)} 次。")
         lines.append(f"- 判题故障：{sum(r['judge_error_count'] for r in rows)} 次。")
+        lines.extend(success_lines())
     else:
         lines = ["# 小规模试用逐人结果（描述性，不做显著性检验）", ""]
         lines.append(f"- 计分规则：**{'首次提交即通过' if args.rule == 'first' else '至少通过一次'}**，按题目计分（不是按提交次数）。")
@@ -256,11 +391,12 @@ def main(argv=None) -> int:
         lines.append("- `judge_ms` 是判题执行耗时，`model_ms` 是模型调用耗时，二者都不是学生作答时间。")
         lines.append("- `gap_median_s`/`gap_mean_s` 是“提示 → 下一次提交”的间隔，含阅读、修改与操作。")
         lines.append("- 没有下一次提交的提示单列（`pending_hints`），不按失败处理，也不剔除。")
-        lines.append("- 小样本只报告逐人结果与简单汇总；如需比较，先确认评分规则与题目等价性，不在本工具里做检验。")
+        lines.append("- 小样本只报告逐人结果与简单汇总；\"前后测对比\"一节只统计同时做了两侧的会话，仍属描述性。")
+        lines.extend(success_lines())
     (export_dir / "trial_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     print(f"✅ 写出 {out_csv}（{len(rows)} 个会话）与 trial_summary.md")
-    print(f"   模式：{'自由体验（描述性，不算前后测）' if args.mode == 'free' else '流程（前测/练习/后测）'}；计分规则 {args.rule}")
+    print(f"   模式：{'自由体验（描述性，含成功率与前后测配对对比）' if args.mode == 'free' else '流程（前测/练习/后测）'}；计分规则 {args.rule}")
     return 0
 
 
