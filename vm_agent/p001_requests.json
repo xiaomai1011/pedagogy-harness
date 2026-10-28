@@ -1,0 +1,62 @@
+{
+  "note": "受控单题验证（P001）的固定请求登记表。worker 只执行本文件里列出的 request，HTTP 请求体里的代码一律拒绝。",
+  "question": "P001",
+  "requests": [
+    {
+      "id": "p001_reference",
+      "note": "参考答案：应 6/6 全部通过（含 4 条隐藏用例）",
+      "expect_status": "pass",
+      "expect_error_type": "none",
+      "code": "n = int(input())\na = list(map(int, input().split()))\n\nbest = a[0]\npos = 1\nfor i in range(1, n):\n    if a[i] > best:\n        best = a[i]\n        pos = i + 1\n\nprint(best, pos)\n"
+    },
+    {
+      "id": "p001_wrong_output",
+      "note": "明确错误输出：最大值与位置顺序写反",
+      "expect_status": "fail",
+      "expect_error_type": "wrong_output",
+      "code": "n = int(input())\na = list(map(int, input().split()))\n\nbest = a[0]\npos = 1\nfor i in range(1, n):\n    if a[i] > best:\n        best = a[i]\n        pos = i + 1\n\nprint(pos, best)\n"
+    },
+    {
+      "id": "p001_syntax",
+      "note": "语法错误：括号不配对",
+      "expect_status": "fail",
+      "expect_error_type": "syntax",
+      "code": "n = int(input())\nprint(best, pos\n"
+    },
+    {
+      "id": "p001_runtime",
+      "note": "运行时异常：列表越界",
+      "expect_status": "crash",
+      "expect_error_type": "runtime",
+      "code": "n = int(input())\na = list(map(int, input().split()))\nprint(a[n])\n"
+    },
+    {
+      "id": "p001_timeout",
+      "note": "超时：死循环",
+      "expect_status": "timeout",
+      "expect_error_type": "timeout",
+      "code": "while True:\n    pass\n"
+    },
+    {
+      "id": "p001_output_flood",
+      "note": "输出过量：一次写 2 万字符，应被截断到 2000",
+      "expect_status": "fail",
+      "expect_error_type": "wrong_output",
+      "code": "import sys\nsys.stdout.write(\"x\" * 20000)\n"
+    },
+    {
+      "id": "p001_spawn_child",
+      "note": "派生子进程后正常作答：结果应通过，且子进程不得残留",
+      "expect_status": "pass",
+      "expect_error_type": "none",
+      "code": "import subprocess, sys\nsubprocess.Popen([sys.executable, \"-c\", \"import time; time.sleep(300)\"])\n\nn = int(input())\na = list(map(int, input().split()))\nbest = a[0]\npos = 1\nfor i in range(1, n):\n    if a[i] > best:\n        best = a[i]\n        pos = i + 1\nprint(best, pos)\n"
+    },
+    {
+      "id": "p001_hidden_fail",
+      "note": "只对公开两条用例写死答案：公开全过、隐藏全错，用于验证隐藏数据脱敏",
+      "expect_status": "fail",
+      "expect_error_type": "wrong_output",
+      "code": "import sys\ndata = sys.stdin.read().split()\nn = int(data[0])\na = list(map(int, data[1:1 + n]))\nif n == 5 and a == [3, 1, 4, 1, 5]:\n    print(\"5 5\")\nelif n == 1 and a == [-7]:\n    print(\"-7 1\")\nelse:\n    print(\"0 0\")\n"
+    }
+  ]
+}

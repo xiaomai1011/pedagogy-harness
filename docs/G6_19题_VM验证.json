@@ -1,0 +1,357 @@
+{
+  "generated_at": "2026-10-28 09:07:28",
+  "agent": {
+    "kind": "vm-agent",
+    "url": "http://192.168.200.10:9443",
+    "protocol": 1
+  },
+  "questions_total": 19,
+  "questions_ok": 19,
+  "probes_ok": 4,
+  "probes_total": 4,
+  "rows": [
+    {
+      "id": "P001",
+      "phase": "practice",
+      "cases": 6,
+      "seconds": 0.109,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 6,
+      "passed": 6,
+      "exec_ms": 96,
+      "stdout_len": 4,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P002",
+      "phase": "practice",
+      "cases": 6,
+      "seconds": 0.11,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 6,
+      "passed": 6,
+      "exec_ms": 96,
+      "stdout_len": 6,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P003",
+      "phase": "practice",
+      "cases": 7,
+      "seconds": 0.125,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 7,
+      "passed": 7,
+      "exec_ms": 112,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P004",
+      "phase": "practice",
+      "cases": 6,
+      "seconds": 0.109,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 6,
+      "passed": 6,
+      "exec_ms": 96,
+      "stdout_len": 6,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P005",
+      "phase": "practice",
+      "cases": 9,
+      "seconds": 0.148,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 9,
+      "passed": 9,
+      "exec_ms": 145,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P006",
+      "phase": "practice",
+      "cases": 5,
+      "seconds": 0.093,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 5,
+      "passed": 5,
+      "exec_ms": 80,
+      "stdout_len": 18,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P007",
+      "phase": "practice",
+      "cases": 7,
+      "seconds": 0.126,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 7,
+      "passed": 7,
+      "exec_ms": 112,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P008",
+      "phase": "practice",
+      "cases": 5,
+      "seconds": 0.083,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 5,
+      "passed": 5,
+      "exec_ms": 80,
+      "stdout_len": 24,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P009",
+      "phase": "practice",
+      "cases": 6,
+      "seconds": 0.109,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 6,
+      "passed": 6,
+      "exec_ms": 96,
+      "stdout_len": 4,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P010",
+      "phase": "practice",
+      "cases": 6,
+      "seconds": 0.109,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 6,
+      "passed": 6,
+      "exec_ms": 96,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P011",
+      "phase": "practice",
+      "cases": 8,
+      "seconds": 0.131,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 8,
+      "passed": 8,
+      "exec_ms": 128,
+      "stdout_len": 3,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P012",
+      "phase": "practice",
+      "cases": 9,
+      "seconds": 0.157,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 9,
+      "passed": 9,
+      "exec_ms": 144,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "P013",
+      "phase": "practice",
+      "cases": 8,
+      "seconds": 0.141,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 8,
+      "passed": 8,
+      "exec_ms": 128,
+      "stdout_len": 3,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "S001",
+      "phase": "pretest",
+      "cases": 15,
+      "seconds": 0.253,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 15,
+      "passed": 15,
+      "exec_ms": 240,
+      "stdout_len": 6,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "S002",
+      "phase": "pretest",
+      "cases": 15,
+      "seconds": 0.243,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 15,
+      "passed": 15,
+      "exec_ms": 239,
+      "stdout_len": 3,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "S003",
+      "phase": "pretest",
+      "cases": 15,
+      "seconds": 0.244,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 15,
+      "passed": 15,
+      "exec_ms": 240,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "S004",
+      "phase": "posttest",
+      "cases": 15,
+      "seconds": 0.253,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 15,
+      "passed": 15,
+      "exec_ms": 240,
+      "stdout_len": 6,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "S005",
+      "phase": "posttest",
+      "cases": 15,
+      "seconds": 0.253,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 15,
+      "passed": 15,
+      "exec_ms": 240,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    },
+    {
+      "id": "S006",
+      "phase": "posttest",
+      "cases": 15,
+      "seconds": 0.243,
+      "status": "pass",
+      "error_type": "none",
+      "exit_code": 0,
+      "total": 15,
+      "passed": 15,
+      "exec_ms": 240,
+      "stdout_len": 2,
+      "failed": [],
+      "ok": true
+    }
+  ],
+  "probes": [
+    {
+      "probe": "wrong_output",
+      "expect": [
+        "fail",
+        "wrong_output"
+      ],
+      "got": [
+        "fail",
+        "wrong_output"
+      ],
+      "exit_code": 0,
+      "exec_ms": 96,
+      "ok": true
+    },
+    {
+      "probe": "syntax",
+      "expect": [
+        "fail",
+        "syntax"
+      ],
+      "got": [
+        "fail",
+        "syntax"
+      ],
+      "exit_code": 1,
+      "exec_ms": 64,
+      "ok": true
+    },
+    {
+      "probe": "runtime",
+      "expect": [
+        "crash",
+        "runtime"
+      ],
+      "got": [
+        "crash",
+        "runtime"
+      ],
+      "exit_code": 1,
+      "exec_ms": 64,
+      "ok": true
+    },
+    {
+      "probe": "timeout",
+      "expect": [
+        "timeout",
+        "timeout"
+      ],
+      "got": [
+        "timeout",
+        "timeout"
+      ],
+      "exit_code": null,
+      "exec_ms": 5002,
+      "ok": true
+    }
+  ]
+}

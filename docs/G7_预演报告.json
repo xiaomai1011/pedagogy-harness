@@ -1,0 +1,365 @@
+{
+  "generated_at": "2026-10-28 09:08:52",
+  "participant_id": "DRYRUN-20261028-090849",
+  "db": "C:\\Users\\45181\\AppData\\Local\\Temp\\ph_dryrun_1793149728.sqlite",
+  "llm_stubbed": true,
+  "status": {
+    "judge": "real",
+    "isolation": "ready",
+    "note": "",
+    "isolation_note": ""
+  },
+  "checks_ok": 27,
+  "checks_total": 27,
+  "submissions": [
+    {
+      "qid": "S001",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "",
+      "knowledge_point": "",
+      "source": "phase_disabled",
+      "hint_level": 0
+    },
+    {
+      "qid": "S002",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "",
+      "knowledge_point": "",
+      "source": "phase_disabled",
+      "hint_level": 0
+    },
+    {
+      "qid": "S003",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "",
+      "knowledge_point": "",
+      "source": "phase_disabled",
+      "hint_level": 0
+    },
+    {
+      "qid": "P001",
+      "status": "fail",
+      "error_type": "wrong_output",
+      "error_class": "逻辑",
+      "knowledge_point": "循环",
+      "source": "harness",
+      "hint_level": 0
+    },
+    {
+      "qid": "P001",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "source": "harness",
+      "hint_level": 0
+    },
+    {
+      "qid": "P002",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "source": "harness",
+      "hint_level": 0
+    },
+    {
+      "qid": "P003",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "source": "harness",
+      "hint_level": 0
+    },
+    {
+      "qid": "P004",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "source": "harness",
+      "hint_level": 0
+    },
+    {
+      "qid": "P005",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "source": "harness",
+      "hint_level": 0
+    },
+    {
+      "qid": "P006",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "source": "harness",
+      "hint_level": 0
+    },
+    {
+      "qid": "S004",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "",
+      "knowledge_point": "",
+      "source": "phase_disabled",
+      "hint_level": 0
+    },
+    {
+      "qid": "S005",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "",
+      "knowledge_point": "",
+      "source": "phase_disabled",
+      "hint_level": 0
+    },
+    {
+      "qid": "S006",
+      "status": "pass",
+      "error_type": "none",
+      "error_class": "",
+      "knowledge_point": "",
+      "source": "phase_disabled",
+      "hint_level": 0
+    }
+  ],
+  "event_kinds": {
+    "submit/finished": 13,
+    "submit/phase_disabled": 6,
+    "hint/phase_disabled": 2,
+    "submit/done": 7,
+    "hint/returned_model": 1,
+    "hint/finished": 1
+  },
+  "events_total": 30,
+  "error_memory": [
+    {
+      "participant_id": "DRYRUN-20261028-090849",
+      "error_class": "逻辑",
+      "knowledge_point": "循环",
+      "count": 1,
+      "last_seen_ts": "2026-10-28T09:08:50+08:00"
+    }
+  ],
+  "isolation_runs": 0,
+  "checks": [
+    {
+      "check": "适配器已就绪（/api/status == ready）",
+      "ok": true,
+      "detail": {
+        "judge": "real",
+        "isolation": "ready",
+        "note": "",
+        "isolation_note": ""
+      }
+    },
+    {
+      "check": "前测 S001 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "前测 S001 不泄露知识点/提示",
+      "ok": true,
+      "detail": {
+        "kp": "",
+        "memory": ""
+      }
+    },
+    {
+      "check": "前测 S002 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "前测 S002 不泄露知识点/提示",
+      "ok": true,
+      "detail": {
+        "kp": "",
+        "memory": ""
+      }
+    },
+    {
+      "check": "前测 S003 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "前测 S003 不泄露知识点/提示",
+      "ok": true,
+      "detail": {
+        "kp": "",
+        "memory": ""
+      }
+    },
+    {
+      "check": "前测请求提示被拒绝（phase_disabled）",
+      "ok": true,
+      "detail": "phase_disabled"
+    },
+    {
+      "check": "练习 P001 错误输出判 fail/wrong_output",
+      "ok": true,
+      "detail": {
+        "status": "fail",
+        "error_type": "wrong_output"
+      }
+    },
+    {
+      "check": "练习阶段有错误分类与知识点",
+      "ok": true,
+      "detail": {
+        "class": "逻辑",
+        "kp": "循环"
+      }
+    },
+    {
+      "check": "练习阶段提示可用",
+      "ok": true,
+      "detail": {
+        "status": "fail",
+        "hint_level": 1
+      }
+    },
+    {
+      "check": "练习 P001 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "练习 P002 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "练习 P003 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "练习 P004 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "练习 P005 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "练习 P006 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "后测 S004 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "后测 S004 不泄露知识点/提示",
+      "ok": true,
+      "detail": {
+        "kp": ""
+      }
+    },
+    {
+      "check": "后测 S005 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "后测 S005 不泄露知识点/提示",
+      "ok": true,
+      "detail": {
+        "kp": ""
+      }
+    },
+    {
+      "check": "后测 S006 参考答案通过",
+      "ok": true,
+      "detail": {
+        "status": "pass",
+        "error_type": "none"
+      }
+    },
+    {
+      "check": "后测 S006 不泄露知识点/提示",
+      "ok": true,
+      "detail": {
+        "kp": ""
+      }
+    },
+    {
+      "check": "后测请求提示被拒绝（phase_disabled）",
+      "ok": true,
+      "detail": "phase_disabled"
+    },
+    {
+      "check": "提交行覆盖全部 12 道预演题目（练习 P001 有 1 次错误提交）",
+      "ok": true,
+      "detail": {
+        "distinct": 12,
+        "total": 13
+      }
+    },
+    {
+      "check": "事件日志可按参与者导出",
+      "ok": true,
+      "detail": 30
+    },
+    {
+      "check": "错误记忆只来自练习阶段（前后测不写记忆）",
+      "ok": true,
+      "detail": [
+        {
+          "participant_id": "DRYRUN-20261028-090849",
+          "error_class": "逻辑",
+          "knowledge_point": "循环",
+          "count": 1,
+          "last_seen_ts": "2026-10-28T09:08:50+08:00"
+        }
+      ]
+    }
+  ]
+}

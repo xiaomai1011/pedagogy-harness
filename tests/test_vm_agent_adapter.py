@@ -76,7 +76,11 @@ class _StubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
-        self.rfile.read(length)
+        raw = self.rfile.read(length)
+        try:
+            self.server.last_request = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.server.last_request = {"raw": raw.decode("utf-8", "replace")}
         if self.path == "/v1/handshake":
             if self.headers.get("X-Agent-Token") != TOKEN:
                 return self._send(401, {"ok": False, "error_code": "agent_rejected"})
@@ -103,6 +107,7 @@ def stub_server():
     httpd.protocol = 1
     httpd.execute_status = 200
     httpd.execute_payload = {}
+    httpd.last_request = {}
     url = _serve(httpd)
     try:
         yield httpd, url
@@ -212,6 +217,24 @@ def test_handshake_and_execute_roundtrip(stub_server):
     assert result.exec_ms == 12 and result.exit_code == 0
 
 
+def test_registered_request_forwards_only_the_name(stub_server):
+    """受控单题验证：只转发登记过的请求名，绝不把代码或题目写进请求体。"""
+    httpd, url = stub_server
+    httpd.execute_payload = {
+        "status": "pass", "total_cases": 6, "passed_cases": 6, "failed_cases": [],
+        "error_type": "none", "stdout": "", "stderr": "", "exec_ms": 5, "exit_code": 0,
+    }
+    adapter = vma.VmAgentAdapter(url, TOKEN)
+    result = adapter.start({"registered_request": "p001_reference",
+                            "code": "print(1)",
+                            "question": {"test_cases": [{"input": "1", "expected": "1"}]}})
+
+    sent = httpd.last_request
+    assert sent.get("registered_request") == "p001_reference"
+    assert "code" not in sent and "question" not in sent, "代码/题目不得离开宿主"
+    assert result.status == "pass" and result.total_cases == 6
+
+
 def test_hidden_case_never_leaks_input_or_expected(stub_server):
     httpd, url = stub_server
     httpd.execute_payload = {
@@ -270,19 +293,34 @@ def test_startup_registration_is_opt_in(monkeypatch):
     assert isolation.registered_execution_adapter() is None
 
 
-def test_startup_registration_registers_adapter_when_enabled(monkeypatch):
+def test_startup_registration_refuses_when_agent_unreachable(monkeypatch):
+    """开关打开但 agent 不可达 ⇒ **不登记**（就绪检查失败即 fail closed）。"""
     from app import main as main_mod
 
+    isolation.clear_execution_adapter()
     monkeypatch.setattr(main_mod, "VM_AGENT_ENABLED", True)
     monkeypatch.setenv("PH_VM_AGENT_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("PH_VM_AGENT_TOKEN", "t" * 16)
     try:
+        assert main_mod._register_configured_vm_agent() is False
+        assert isolation.registered_execution_adapter() is None
+    finally:
+        isolation.clear_execution_adapter()
+
+
+def test_startup_registration_registers_when_ready(monkeypatch, stub_server):
+    """健康检查 + 握手 + 能力检查全过才登记；登记后 `guarded_execute` 走这个适配器。"""
+    from app import main as main_mod
+
+    httpd, url = stub_server
+    isolation.clear_execution_adapter()
+    monkeypatch.setattr(main_mod, "VM_AGENT_ENABLED", True)
+    monkeypatch.setenv("PH_VM_AGENT_URL", url)
+    monkeypatch.setenv("PH_VM_AGENT_TOKEN", TOKEN)
+    try:
         assert main_mod._register_configured_vm_agent() is True
         adapter = isolation.registered_execution_adapter()
         assert adapter is not None
-        assert adapter.base_url == "http://127.0.0.1:9"
-        # 登记 ≠ 就绪：agent 不可达时仍必须拒判
-        with pytest.raises(isolation.IsolationUnavailable):
-            isolation.guarded_execute(adapter, {"question": {}, "code": ""})
+        assert adapter.base_url == url
     finally:
         isolation.clear_execution_adapter()

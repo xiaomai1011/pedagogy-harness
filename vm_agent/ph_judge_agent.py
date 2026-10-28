@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""ph-judge-agent —— VM 内最小判题 agent（**阶段 4：转发内置固定样例**）。
+"""ph-judge-agent —— VM 内最小判题 agent（**阶段 5：真实提交执行**）。
 
-设计约束（评阅 m00935 / m01225）：
+设计约束（评阅 m00935 / m01225 / m01798）：
 
 - 只用标准库，不装依赖：VM 目前离线，`pip` 也没有；
 - 只监听内部交换机地址，默认 `192.168.200.10:9443`；
 - 所有 `/v1/*` 请求都要求 `X-Agent-Token`，**token 只从文件读，不进日志**；
 - 以 **phagent** 身份运行：不在 sudo/docker 组，**自己不执行任何代码**——
   执行一律转给 Unix socket 后面以 **phcode** 身份运行的 worker；
-- `/v1/execute` 阶段 4 **只接受内置固定样例名**，收到 `code`/`question` 直接拒绝；
-  因此宿主侧仍会 fail closed，学生提交不会被执行。
+- `/v1/execute` 接受三种请求：内置样例名、登记过的固定请求、**真实提交**
+  （`code` + `test_cases`/`question`，由 worker 在沙箱里跑）。agent 只做参数
+  校验与转发，**代码与答案都不落 agent 日志**；
 
 用法：
 
@@ -29,9 +30,12 @@ import socket
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.4.0"
 PROTOCOL_VERSION = 1
 MAX_BODY_BYTES = 1 * 1024 * 1024          # 1 MiB，超出直接 413
+MAX_CASES = 50
+MAX_CODE_BYTES = 200_000
+MAX_TIMEOUT_SECONDS = 5.0
 WORKER_SOCKET = os.environ.get("PH_WORKER_SOCKET", "/run/ph-judge/worker.sock")
 CAPABILITIES_FILE = os.environ.get(
     "PH_CAPABILITIES_FILE", "/etc/ph-judge-agent/capabilities.json")
@@ -176,16 +180,62 @@ class AgentHandler(BaseHTTPRequestHandler):
             if not self._authorized():
                 return self._send(401, {"ok": False, "error_code": "agent_rejected",
                                         "message": "token 校验失败"})
-            # 阶段 4：**只接受内置固定样例**，绝不把请求体里的代码当学生代码执行
+            registered = payload.get("registered_request")
+            if isinstance(registered, str) and registered:
+                try:
+                    reply = call_worker({"op": "judge_request", "request": registered},
+                                        timeout=self.server.worker_timeout)
+                except OSError as exc:
+                    return self._send(503, {"ok": False, "status": "error",
+                                            "error_code": "agent_unreachable",
+                                            "message": f"worker 不可达：{exc.__class__.__name__}"})
+                if not reply.get("ok"):
+                    return self._send(503, dict(reply, status="error"))
+                return self._send(200, dict(reply, ok=True, agent_version=AGENT_VERSION))
+
+            # ---- 真实提交：学生代码 + 用例，全部交给 phcode 的 worker 执行 ----
+            code = payload.get("code")
+            if isinstance(code, str) and code.strip():
+                cases = payload.get("test_cases")
+                if cases is None:
+                    question = payload.get("question")
+                    if isinstance(question, dict):
+                        cases = question.get("test_cases")
+                if not isinstance(cases, list) or not cases:
+                    return self._send(503, {"ok": False, "status": "error",
+                                            "error_code": "agent_rejected",
+                                            "message": "缺少测试用例"})
+                if len(cases) > MAX_CASES:
+                    return self._send(503, {"ok": False, "status": "error",
+                                            "error_code": "agent_rejected",
+                                            "message": f"测试用例超过 {MAX_CASES} 条"})
+                if len(code.encode("utf-8")) > MAX_CODE_BYTES:
+                    return self._send(503, {"ok": False, "status": "error",
+                                            "error_code": "agent_rejected",
+                                            "message": "代码超过 200 KB"})
+                try:
+                    timeout = float(payload.get("timeout") or MAX_TIMEOUT_SECONDS)
+                except (TypeError, ValueError):
+                    timeout = MAX_TIMEOUT_SECONDS
+                timeout = max(1.0, min(MAX_TIMEOUT_SECONDS, timeout))
+                budget = min(120.0, timeout * len(cases) + 15.0)
+                try:
+                    reply = call_worker({"op": "execute_submission", "code": code,
+                                         "test_cases": cases, "timeout": timeout},
+                                        timeout=budget)
+                except OSError as exc:
+                    return self._send(503, {"ok": False, "status": "error",
+                                            "error_code": "agent_unreachable",
+                                            "message": f"worker 不可达：{exc.__class__.__name__}"})
+                if not reply.get("ok"):
+                    return self._send(503, dict(reply, status="error"))
+                return self._send(200, dict(reply, ok=True, agent_version=AGENT_VERSION))
+
             fixture = payload.get("fixture")
-            if "code" in payload or "question" in payload:
-                return self._send(503, {"ok": False, "status": "error",
-                                        "error_code": "agent_rejected",
-                                        "message": "阶段 4 只接受内置固定样例，不接受任意代码"})
             if not isinstance(fixture, str):
                 return self._send(503, {"ok": False, "status": "error",
                                         "error_code": "agent_rejected",
-                                        "message": "缺少 fixture 字段"})
+                                        "message": "缺少 code、fixture 或 registered_request 字段"})
             try:
                 reply = call_worker({"op": "execute_fixture", "fixture": fixture})
             except OSError as exc:
@@ -205,6 +255,8 @@ def build_server(bind: str, port: int, token: str) -> ThreadingHTTPServer:
     httpd.daemon_threads = True
     httpd.token = token
     httpd.capabilities = load_capabilities()
+    # 受控单题验证：6 条用例 × 5 秒上限 + 进程清理开销，留足 60 秒
+    httpd.worker_timeout = 60.0
     return httpd
 
 

@@ -142,6 +142,11 @@ class VmAgentAdapter:
     # ---------------- 内部实现 ----------------
 
     def _build_request(self, payload: dict) -> dict:
+        # 受控单题验证：只转发**已登记**的固定请求名，不转发任何代码
+        registered = payload.get("registered_request") or payload.get("registered_request_id")
+        if registered:
+            return {"request_id": payload.get("request_id") or "",
+                    "registered_request": str(registered)}
         question = payload.get("question") or {}
         cases = []
         for index, case in enumerate(question.get("test_cases") or [], start=1):
@@ -155,9 +160,9 @@ class VmAgentAdapter:
             "request_id": payload.get("request_id") or "",
             "language": payload.get("language") or "python",
             "code": payload.get("code") or "",
-            "timeout_seconds": int(payload.get("timeout_seconds", TIMEOUT_SECONDS)),
+            "timeout": float(payload.get("timeout_seconds", TIMEOUT_SECONDS)),
             "output_limit": int(payload.get("output_limit", OUTPUT_LIMIT)),
-            "cases": cases,
+            "test_cases": cases,
         }
 
     def _request(self, method: str, path: str, payload, timeout: float) -> _Response:

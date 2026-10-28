@@ -32,15 +32,27 @@
 请求：`{"protocol": 1}`；响应：`{"ok": true, "protocol": 1, "agent_version": "0.1.0", "capabilities": {...}}`。
 `401`（token 错）／`409`（协议版本不匹配）都表示**拒绝**，宿主必须 fail closed。
 
-### `POST /v1/execute`（阶段 2 返回 `503`，执行能力未实现）
+### `POST /v1/execute`
+
+阶段 5 起支持三类请求（按优先级）：
+
+1. `{"registered_request": "<id>"}` —— 只跑**预登记**的固定请求（P001 验证用）；
+2. 真实提交：`{"code": "...", "test_cases": [...], "timeout": 5, "output_limit": 2000}`
+   （也接受 `question.test_cases`）；
+3. `{"fixture": "<name>"}` —— 内置样例（隔离能力自检用）。
 
 请求（字段即宿主适配器的输入契约）：
 
 ```json
 {"request_id": "R-...", "language": "python", "code": "...",
- "timeout_seconds": 5, "output_limit": 2000,
- "cases": [{"case_index": 1, "input": "1 2\n", "expected": "3", "hidden": false}]}
+ "timeout": 5, "output_limit": 2000,
+ "test_cases": [{"case_index": 1, "input": "1 2\n", "expected": "3", "hidden": false}]}
 ```
+
+**限制（agent 侧校验，超限直接 `agent_rejected`）**：`code` ≤ 200 KB；
+`test_cases` 1–50 条，`input`/`expected` 各 ≤ 100 KB；`timeout` 夹在 1–5 秒；
+`output_limit` 夹在 100–4000。agent 只做校验与转发（以 `phagent` 身份），
+真正的进程由 **`phcode`** 身份的 worker 在沙箱里起，agent 不记录请求体。
 
 响应：
 

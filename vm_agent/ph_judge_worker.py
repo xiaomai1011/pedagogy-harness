@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""ph-judge-worker —— VM 内的**受限执行进程**（阶段 4：只跑内置固定样例）。
+"""ph-judge-worker —— VM 内的**受限执行进程**。
 
-职责边界（评阅 m00935 / m01225）：
+职责边界（评阅 m00935 / m01225 / m01647）：
 
 - 以 **phcode** 身份运行：不在 sudo / docker 组，读不到 agent token 与 SSH 配置；
 - 只监听 Unix socket（`/run/ph-judge/worker.sock`），**不监听任何网络端口**；
 - 只接受对端 uid == `phagent` 的连接（`SO_PEERCRED`），学生代码即使以 phcode
   身份跑起来，也冒充不了 agent 的连接；
-- **只执行本文件内定义的固定样例**（fixture）。阶段 4 不接收任意代码，
-  收到 `code`/`question` 一律拒绝；
+- 只执行两类内容：内置 fixture / 登记表里的固定请求（受控测试用），以及
+  **真实提交**（`execute_submission`：代码 + 用例由 agent 转发，形制与契约 §1 一致）；
+- 隐藏用例的期望输出只存在于 worker 内存：题目文件由 systemd 以 root 预拷到
+  `/run/ph-judge/questions`，worker 启动时读入并**立即删除磁盘副本**；
 - 每请求独立临时目录、环境变量白名单、5 秒超时、杀整棵进程树、
   stdout/stderr 上限、结束清理目录；清理失败**如实上报**，不伪装成功。
 
@@ -32,13 +34,26 @@ import sys
 import tempfile
 import time
 
-WORKER_VERSION = "0.1.0"
+WORKER_VERSION = "0.4.0"
 PROTOCOL_VERSION = 1
 
 TIMEOUT_SECONDS = 5.0
 REAP_GRACE_SECONDS = 3.0
 OUTPUT_LIMIT = 2000
 MAX_LINE_BYTES = 64 * 1024
+
+#: 预置题目（由 systemd 以 root 预拷到 /run/ph-judge/questions，worker 启动后读入内存并删除，
+#: 执行期间磁盘上不再有隐藏用例的期望输出）
+QUESTIONS_DIR = os.environ.get("PH_QUESTIONS_DIR", "/run/ph-judge/questions")
+
+#: 固定请求登记表（只有表内的 request 会被执行；放在 0755 的 /opt 下，
+#: 执行身份可读；里面只有请求名与固定样例代码，不含答案）
+REQUESTS_FILE = os.environ.get("PH_REQUESTS_FILE",
+                              "/opt/ph-judge-agent/p001_requests.json")
+
+#: 启动时装载：{"question": "P001", "requests": {id: spec}}
+REGISTRY: dict = {"question": "", "requests": {}}
+QUESTIONS: dict = {}
 
 #: 环境变量白名单：不继承 token、代理、模型密钥等任何宿主侧变量
 ENV_ALLOW = (
@@ -304,6 +319,268 @@ def run_fixture(name: str, timeout: float = TIMEOUT_SECONDS,
     }
 
 
+def load_questions(directory: str = QUESTIONS_DIR) -> dict:
+    """把预置题目读进内存，**读完立刻删除磁盘副本**。
+
+    隐藏用例的期望输出只在 worker 内存里；执行身份（phcode）与学生代码同 uid，
+    所以不能把答案留在磁盘上。
+    """
+    bank: dict = {}
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return bank
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                question = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(question, dict) and question.get("id"):
+            bank[str(question["id"])] = question
+        try:
+            os.unlink(path)                       # 答案不留在磁盘上
+        except OSError:
+            pass
+    return bank
+
+
+def load_registry(path: str = REQUESTS_FILE) -> dict:
+    """读取固定请求登记表；表外的请求一律拒绝。"""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {"question": "", "requests": {}}
+    if not isinstance(data, dict):
+        return {"question": "", "requests": {}}
+    requests = {}
+    for item in data.get("requests") or []:
+        if isinstance(item, dict) and isinstance(item.get("id"), str) \
+                and isinstance(item.get("code"), str):
+            requests[item["id"]] = item
+    return {"question": str(data.get("question") or ""), "requests": requests}
+
+
+def _normalize(text: str) -> str:
+    """与契约 §1 一致：统一换行 → 去每行行尾空白 → 去末尾空行。"""
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in text.split("\n")]
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _looks_like_syntax_error(stderr: str) -> bool:
+    return any(marker in stderr
+               for marker in ("SyntaxError", "IndentationError", "TabError"))
+
+
+def run_case(code: str, stdin_text: str, work_root: str,
+             timeout: float = TIMEOUT_SECONDS,
+             output_limit: int = OUTPUT_LIMIT) -> dict:
+    """跑**一条**用例：独立临时目录、文件式管道、超时杀整棵进程树。"""
+    tmpdir = tempfile.mkdtemp(prefix="case-", dir=work_root)
+    exit_code = None
+    timed_out = False
+    leftover = False
+    cleanup_status = "ok"
+    stdout = stderr = ""
+    try:
+        script = os.path.join(tmpdir, "main.py")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(code)
+        in_path = os.path.join(tmpdir, ".stdin")
+        out_path = os.path.join(tmpdir, ".stdout")
+        err_path = os.path.join(tmpdir, ".stderr")
+        with open(in_path, "wb") as fh:
+            fh.write(stdin_text.encode("utf-8"))
+
+        with open(in_path, "rb") as fin, \
+                open(out_path, "wb") as fout, open(err_path, "wb") as ferr:
+            proc = subprocess.Popen(
+                [sys.executable, script],
+                cwd=tmpdir, env=_child_env(), stdin=fin,
+                stdout=fout, stderr=ferr,
+                start_new_session=True, preexec_fn=_limits,
+            )
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _kill_tree(proc.pid)
+                try:
+                    proc.wait(timeout=REAP_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
+            exit_code = proc.returncode
+            _kill_tree(proc.pid)                  # 派生进程不得残留
+            leftover = _group_alive(proc.pid, 2.0)
+
+        with open(out_path, "rb") as fh:
+            stdout = fh.read(output_limit + 1).decode("utf-8", "replace")
+        with open(err_path, "rb") as fh:
+            stderr = fh.read(output_limit + 1).decode("utf-8", "replace")
+    except OSError as exc:
+        cleanup_status = f"spawn_failed: {exc.__class__.__name__}"
+    finally:
+        try:
+            shutil.rmtree(tmpdir)
+        except OSError as exc:
+            cleanup_status = f"dir_cleanup_failed: {exc.__class__.__name__}"
+    if leftover:
+        cleanup_status = "leftover_processes"
+    return {
+        "stdout": stdout[:output_limit],
+        "stderr": stderr[:output_limit],
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "cleanup_status": cleanup_status,
+    }
+
+
+def _judge_cases(*, code: str, cases: list, work_root: str, timeout: float,
+                 output_limit: int) -> dict:
+    """按契约 §1 跑完一组用例，返回与 `JudgeResult` 同形的字典。"""
+    started = time.monotonic()
+    passed = 0
+    failed: list = []
+    status, error_type = "pass", "none"
+    last_stdout = last_stderr = ""
+    last_exit = None
+    cleanup_notes = []
+
+    for index, case in enumerate(cases):
+        hidden = bool(case.get("hidden", False))
+        outcome = run_case(code, str(case.get("input", "")) + "\n",
+                           work_root, timeout, output_limit)
+        last_stdout = outcome["stdout"]
+        last_stderr = outcome["stderr"]
+        last_exit = outcome["exit_code"]
+        if outcome["cleanup_status"] != "ok":
+            cleanup_notes.append(f"case{index}:{outcome['cleanup_status']}")
+        if outcome["timed_out"]:
+            status, error_type = "timeout", "timeout"
+            last_exit = None
+            break
+        if outcome["exit_code"] != 0:
+            if _looks_like_syntax_error(last_stderr):
+                status, error_type = "fail", "syntax"
+            else:
+                status, error_type = "crash", "runtime"
+            break
+        actual = _normalize(last_stdout)
+        if actual == _normalize(str(case.get("expected", ""))):
+            passed += 1
+            continue
+        failed.append({
+            "case_index": index,
+            "hidden": hidden,
+            # 隐藏用例：输入与期望输出一律不回传（防泄题）
+            "input": None if hidden else case.get("input", ""),
+            "expected": None if hidden else case.get("expected", ""),
+            "actual": actual[:output_limit],
+        })
+        status, error_type = "fail", "wrong_output"
+
+    return {
+        "status": status,
+        "total_cases": len(cases),
+        "passed_cases": passed,
+        "failed_cases": failed,
+        "error_type": error_type,
+        "stderr": (last_stderr or "")[:output_limit],
+        "stdout": (last_stdout or "")[:output_limit],
+        "exec_ms": int((time.monotonic() - started) * 1000),
+        "exit_code": last_exit,
+        "cleanup_status": "ok" if not cleanup_notes else ";".join(cleanup_notes),
+    }
+
+
+def run_registered(name: str, timeout: float = TIMEOUT_SECONDS,
+                   output_limit: int = OUTPUT_LIMIT) -> dict:
+    """执行登记表里的固定请求：代码来自登记表，**请求体里的代码一概不用**。"""
+    spec = REGISTRY["requests"].get(name)
+    if spec is None:
+        return {"ok": False, "error_code": "agent_rejected",
+                "message": "未登记的固定请求"}
+    question = QUESTIONS.get(REGISTRY.get("question") or "")
+    if not question:
+        return {"ok": False, "error_code": "agent_rejected",
+                "message": "题目未加载"}
+    cases = question.get("test_cases") or []
+    if not cases:
+        return {"ok": False, "error_code": "agent_rejected",
+                "message": "题目没有测试用例"}
+
+    work_root = os.environ.get("PH_WORK_ROOT", "/run/ph-judge/work")
+    os.makedirs(work_root, exist_ok=True)
+    result = _judge_cases(code=spec["code"], cases=cases, work_root=work_root,
+                          timeout=timeout, output_limit=output_limit)
+    result.update({"ok": True, "request": name, "question": question.get("id")})
+    return result
+
+
+#: 真实提交的入参上限：只在 agent 侧校验一遍，worker 再兜底一遍
+MAX_CODE_BYTES = 200_000
+MAX_CASES = 50
+MAX_CASE_TEXT = 100_000
+
+
+def _clamp_timeout(value, default: float = TIMEOUT_SECONDS) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1.0, min(TIMEOUT_SECONDS, seconds))
+
+
+def run_submission(payload: dict) -> dict:
+    """执行一次**真实提交**：学生代码 + 题目用例，全部在 phcode 沙箱里跑。
+
+    与固定样例走同一条 `run_case()`：独立临时目录、环境白名单、5 秒超时、
+    杀整棵进程树、输出上限、结束清理。差别只在代码和用例来自请求体。
+    """
+    code = payload.get("code")
+    cases = payload.get("test_cases")
+    if not isinstance(code, str) or not code.strip():
+        return {"ok": False, "error_code": "agent_rejected", "message": "缺少代码"}
+    if len(code.encode("utf-8")) > MAX_CODE_BYTES:
+        return {"ok": False, "error_code": "agent_rejected", "message": "代码超过 200 KB"}
+    if not isinstance(cases, list) or not cases:
+        return {"ok": False, "error_code": "agent_rejected", "message": "缺少测试用例"}
+    if len(cases) > MAX_CASES:
+        return {"ok": False, "error_code": "agent_rejected",
+                "message": f"测试用例超过 {MAX_CASES} 条"}
+    clean_cases = []
+    for case in cases:
+        if not isinstance(case, dict):
+            return {"ok": False, "error_code": "agent_rejected", "message": "用例必须是对象"}
+        text_in = case.get("input", "")
+        text_exp = case.get("expected", "")
+        if not isinstance(text_in, str) or not isinstance(text_exp, str):
+            return {"ok": False, "error_code": "agent_rejected", "message": "用例字段必须是字符串"}
+        if len(text_in) > MAX_CASE_TEXT or len(text_exp) > MAX_CASE_TEXT:
+            return {"ok": False, "error_code": "agent_rejected", "message": "用例文本过长"}
+        clean_cases.append({"input": text_in, "expected": text_exp,
+                            "hidden": bool(case.get("hidden", False))})
+
+    output_limit = payload.get("output_limit", OUTPUT_LIMIT)
+    if not isinstance(output_limit, int) or not 100 <= output_limit <= 4000:
+        output_limit = OUTPUT_LIMIT
+    timeout = _clamp_timeout(payload.get("timeout"))
+
+    work_root = os.environ.get("PH_WORK_ROOT", "/run/ph-judge/work")
+    os.makedirs(work_root, exist_ok=True)
+    result = _judge_cases(code=code, cases=clean_cases, work_root=work_root,
+                          timeout=timeout, output_limit=output_limit)
+    result["ok"] = True
+    return result
+
+
 def _peer_is_agent(conn: socket.socket) -> bool:
     try:
         creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
@@ -332,7 +609,22 @@ def _handle(conn: socket.socket) -> None:
         reply = {"ok": False, "error_code": "agent_rejected", "message": "请求必须是 JSON 对象"}
     elif req.get("op") == "ping":
         reply = {"ok": True, "worker": "ph-judge-worker", "version": WORKER_VERSION,
-                 "protocol": PROTOCOL_VERSION, "fixtures": sorted(FIXTURES)}
+                 "protocol": PROTOCOL_VERSION, "fixtures": sorted(FIXTURES),
+                 "requests": sorted(REGISTRY["requests"]),
+                 "question": REGISTRY.get("question")}
+    elif req.get("op") == "judge_request":
+        if "code" in req or "question" in req:
+            reply = {"ok": False, "error_code": "agent_rejected",
+                     "message": "只接受已登记的固定请求，不接受任意代码"}
+        else:
+            name = req.get("request")
+            if isinstance(name, str):
+                reply = run_registered(name)
+            else:
+                reply = {"ok": False, "error_code": "agent_rejected",
+                         "message": "缺少 request 字段"}
+    elif req.get("op") == "execute_submission":
+        reply = run_submission(req)
     elif req.get("op") == "execute_fixture":
         if "code" in req or "question" in req:
             reply = {"ok": False, "error_code": "agent_rejected",
@@ -351,6 +643,9 @@ def _handle(conn: socket.socket) -> None:
 
 
 def serve(socket_path: str) -> int:
+    global REGISTRY, QUESTIONS
+    REGISTRY = load_registry()
+    QUESTIONS = load_questions()
     if os.path.exists(socket_path):
         os.unlink(socket_path)
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -364,7 +659,10 @@ def serve(socket_path: str) -> int:
         pass
     srv.listen(8)
     print(f"ph-judge-worker {WORKER_VERSION} 监听 {socket_path}"
-          f"（uid={os.getuid()} euid={os.geteuid()}）", flush=True)
+          f"（uid={os.getuid()} euid={os.geteuid()}）"
+          f" 内置样例 {len(FIXTURES)} 个；登记请求 {len(REGISTRY['requests'])} 个"
+          f"（题目 {REGISTRY.get('question') or '-'}，已装载 {len(QUESTIONS)} 份）",
+          flush=True)
     while True:
         conn, _addr = srv.accept()
         try:

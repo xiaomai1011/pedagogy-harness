@@ -19,7 +19,8 @@ from app.harness import builtin  # noqa: F401  —— 导入即注册内置组�
 from app.harness import registry
 from app.harness.config_switch import PRESETS
 from app.harness.pipeline import handle_hint_request, handle_submission
-from app.harness.vm_agent_adapter import register_vm_agent_adapter
+from app.harness import isolation
+from app.harness.vm_agent_adapter import VmAgentAdapter, register_vm_agent_adapter
 from app.questions import list_questions, load_question
 
 app = FastAPI(title="pedagogy-harness")
@@ -46,13 +47,19 @@ _log = logging.getLogger(__name__)
 
 
 def _register_configured_vm_agent() -> bool:
-    """按运维开关登记 VM 适配器；任何失败都保持未登记，**绝不降级到宿主执行**。"""
+    """按运维开关登记 VM 适配器；任何失败都保持未登记，**绝不降级到宿主执行**。
+
+    登记前先做一次**健康检查 + 握手 + 能力检查**（`check_isolation()`）：
+    未就绪就干脆不登记，避免"登记了但每个请求都拒"的假接入。
+    """
     if not VM_AGENT_ENABLED:
         return False
     try:
-        adapter = register_vm_agent_adapter()
+        adapter = VmAgentAdapter()
+        adapter.check_isolation()
+        isolation.register_execution_adapter(adapter)
     except Exception as exc:  # noqa: BLE001 —— 登记失败只记日志，进程继续 fail closed
-        _log.warning("VM agent 适配器登记失败，保持未登记：%s", exc)
+        _log.warning("VM agent 适配器未登记（就绪检查未通过）：%s", exc)
         return False
     _log.info("已登记 VM agent 适配器：%s", adapter.describe()["url"])
     return True
