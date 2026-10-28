@@ -1,4 +1,4 @@
-[Unit]
+﻿[Unit]
 Description=ph-judge-worker（phcode 身份，只执行内置样例与已登记固定请求）
 After=network.target
 Before=ph-judge-agent.service
@@ -14,6 +14,7 @@ WorkingDirectory=/var/lib/ph-code
 ExecStartPre=+/usr/bin/install -d -o phcode -g phcode -m 0700 /run/ph-judge/questions
 ExecStartPre=+/usr/bin/install -o phcode -g phcode -m 0400 /etc/ph-judge-agent/p001.json /run/ph-judge/questions/P001.json
 ExecStart=/usr/bin/python3 /opt/ph-judge-agent/ph_judge_worker.py --socket /run/ph-judge/worker.sock
+KillMode=control-group
 Restart=on-failure
 RestartSec=3
 
@@ -34,3 +35,4 @@ Environment=PH_WORK_ROOT=/run/ph-judge/work
 Environment=PH_WORKER_SOCKET=/run/ph-judge/worker.sock
 Environment=PH_QUESTIONS_DIR=/run/ph-judge/questions
 Environment=PH_REQUESTS_FILE=/opt/ph-judge-agent/p001_requests.json
+

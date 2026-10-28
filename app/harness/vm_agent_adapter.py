@@ -132,6 +132,10 @@ class VmAgentAdapter:
         resp = self._request("POST", "/v1/execute", body, self.request_timeout)
         if resp.status != 200:
             code = str(resp.body.get("error_code") or "")
+            # 清理失败 ⇒ 用受控的清理类 detail_code 记录，避免被当成通道故障
+            if code in ("cleanup_failed", "rm_failed", "rm_timeout", "rm_denied"):
+                raise isolation.IsolationUnavailable(
+                    "rm_failed", f"agent 报告清理失败（{code}）")
             # 5xx 且不是明确的受限拒绝 ⇒ 通道问题；其余按"请求被拒"
             detail = "agent_rejected" if resp.status < 500 or code == "agent_rejected" \
                 else "channel_unavailable"

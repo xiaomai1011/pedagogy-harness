@@ -238,6 +238,36 @@ def _group_alive(pgid: int, wait_seconds: float) -> bool:
     return True
 
 
+#: 清理失败后置位：在人工/重启恢复前**拒绝接收新任务**，不假装还能继续用。
+DEGRADED = {"reason": ""}
+
+
+def _work_root_entries(work_root: str) -> list:
+    try:
+        return sorted(os.listdir(work_root))
+    except OSError:
+        return ["<unreadable>"]
+
+
+def _purge_work_root(work_root: str) -> str:
+    """把工作根目录清空（含学生代码写到根目录里的东西），返回 "" 表示干净。"""
+    try:
+        os.makedirs(work_root, exist_ok=True)
+        for name in os.listdir(work_root):
+            path = os.path.join(work_root, name)
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path)
+                else:
+                    os.unlink(path)
+            except OSError as exc:
+                return f"rm_failed: {exc.__class__.__name__}"
+    except OSError as exc:
+        return f"rm_denied: {exc.__class__.__name__}"
+    left = _work_root_entries(work_root)
+    return "" if not left else "rm_failed: leftover " + ",".join(left[:3])
+
+
 def run_fixture(name: str, timeout: float = TIMEOUT_SECONDS,
                 output_limit: int = OUTPUT_LIMIT) -> dict:
     spec = FIXTURES.get(name)
@@ -292,8 +322,15 @@ def run_fixture(name: str, timeout: float = TIMEOUT_SECONDS,
         shutil.rmtree(tmpdir)
     except OSError as exc:
         cleanup_status = f"dir_cleanup_failed: {exc.__class__.__name__}"
+    # 学生代码与本进程同 uid，可能把文件写到工作根目录（逃出 tmpdir）。
+    # 每次任务结束都清空整个工作根目录，确保下一个任务看不到上一个任务的任何残留。
+    purge_status = _purge_work_root(work_root)
+    if purge_status:
+        cleanup_status = purge_status
     if leftover:
         cleanup_status = "leftover_processes"
+    if cleanup_status != "ok":
+        DEGRADED["reason"] = cleanup_status
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     clipped_out = stdout[:output_limit]
@@ -431,8 +468,15 @@ def run_case(code: str, stdin_text: str, work_root: str,
             shutil.rmtree(tmpdir)
         except OSError as exc:
             cleanup_status = f"dir_cleanup_failed: {exc.__class__.__name__}"
+        # 同 uid 的学生代码可能把文件写到工作根目录；每次任务结束都清空根目录，
+        # 保证下一个任务看不到上一个任务的任何残留。
+        purge_status = _purge_work_root(work_root)
+        if purge_status:
+            cleanup_status = purge_status
     if leftover:
         cleanup_status = "leftover_processes"
+    if cleanup_status != "ok":
+        DEGRADED["reason"] = cleanup_status
     return {
         "stdout": stdout[:output_limit],
         "stderr": stderr[:output_limit],
@@ -607,6 +651,10 @@ def _handle(conn: socket.socket) -> None:
 
     if not isinstance(req, dict):
         reply = {"ok": False, "error_code": "agent_rejected", "message": "请求必须是 JSON 对象"}
+    elif DEGRADED["reason"] and req.get("op") != "ping":
+        reply = {"ok": False, "error_code": "cleanup_failed",
+                 "message": "上一个任务的清理未完成（%s），在人工恢复前拒绝新任务"
+                            % DEGRADED["reason"]}
     elif req.get("op") == "ping":
         reply = {"ok": True, "worker": "ph-judge-worker", "version": WORKER_VERSION,
                  "protocol": PROTOCOL_VERSION, "fixtures": sorted(FIXTURES),
@@ -646,6 +694,13 @@ def serve(socket_path: str) -> int:
     global REGISTRY, QUESTIONS
     REGISTRY = load_registry()
     QUESTIONS = load_questions()
+    # 上次进程异常退出（如被学生代码杀死）可能留下旧任务目录：启动时先清空，
+    # 清不干净就**不启动**，由 systemd 重试并保留失败状态，绝不带残留接单。
+    work_root = os.environ.get("PH_WORK_ROOT", "/run/ph-judge/work")
+    startup_clean = _purge_work_root(work_root)
+    if startup_clean:
+        sys.stderr.write(f"[worker] 启动清理失败：{startup_clean}，拒绝启动\n")
+        return 3
     if os.path.exists(socket_path):
         os.unlink(socket_path)
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

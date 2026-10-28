@@ -77,6 +77,16 @@ def readiness_of(caps: dict) -> str:
     return "not_ready"
 
 
+def cleanup_failure(reply: dict) -> dict:
+    """清理没做干净 ⇒ 本次结果不可用，按 503 明确失败，而不是当成判题结果。"""
+    status = reply.get("cleanup_status")
+    if status in (None, "", "ok"):
+        return {}
+    return {"ok": False, "status": "error", "error_code": "cleanup_failed",
+            "message": "执行后清理未完成（%s），本次结果不可用" % status,
+            "cleanup_status": status}
+
+
 def call_worker(payload: dict, timeout: float = 20.0) -> dict:
     """把请求转给 **phcode** 身份的 worker；agent 自己不执行任何代码。"""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -191,6 +201,9 @@ class AgentHandler(BaseHTTPRequestHandler):
                                             "message": f"worker 不可达：{exc.__class__.__name__}"})
                 if not reply.get("ok"):
                     return self._send(503, dict(reply, status="error"))
+                fail = cleanup_failure(reply)
+                if fail:
+                    return self._send(503, fail)
                 return self._send(200, dict(reply, ok=True, agent_version=AGENT_VERSION))
 
             # ---- 真实提交：学生代码 + 用例，全部交给 phcode 的 worker 执行 ----
@@ -229,6 +242,9 @@ class AgentHandler(BaseHTTPRequestHandler):
                                             "message": f"worker 不可达：{exc.__class__.__name__}"})
                 if not reply.get("ok"):
                     return self._send(503, dict(reply, status="error"))
+                fail = cleanup_failure(reply)
+                if fail:
+                    return self._send(503, fail)
                 return self._send(200, dict(reply, ok=True, agent_version=AGENT_VERSION))
 
             fixture = payload.get("fixture")
@@ -244,6 +260,9 @@ class AgentHandler(BaseHTTPRequestHandler):
                                         "message": f"worker 不可达：{exc.__class__.__name__}"})
             if not reply.get("ok"):
                 return self._send(503, dict(reply, status="error"))
+            fail = cleanup_failure(reply)
+            if fail:
+                return self._send(503, fail)
             return self._send(200, dict(reply, ok=True, agent_version=AGENT_VERSION))
 
         self._send(404, {"ok": False, "error_code": "agent_rejected",
@@ -293,3 +312,4 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
