@@ -17,10 +17,15 @@
 """
 
 import os
+import threading
+import time
 
 from dotenv import load_dotenv
 
 load_dotenv()  # 读取本机 .env（若存在）；不会覆盖已存在的环境变量
+
+#: 线程局部计时：`llm()` 每次调用后把耗时写到这里（见 `last_elapsed_ms`）。
+_TLS = threading.local()
 
 REQUIRED = ("PH_LLM_BASE_URL", "PH_LLM_API_KEY", "PH_LLM_MODEL")
 
@@ -123,7 +128,37 @@ def llm(system: str, user: str, *, temperature: float = DEFAULT_TEMPERATURE,
 
     未配置时返回桩文本（便于无 Key 环境下跑通链路），**不抛异常**。
     配置齐全但调用失败时，抛异常——让问题暴露，不要静默返回假内容。
+
+    **计时**：每次调用把耗时记进线程局部变量，调用方用 `last_elapsed_ms()` 取。
+    这样分类兜底、提示生成、重试等**所有**模型路径都能被统计，而不是只包住提示那一次。
     """
+    started = time.perf_counter()
+    try:
+        return _llm_impl(system, user, temperature=temperature, max_tokens=max_tokens)
+    finally:
+        spent = int((time.perf_counter() - started) * 1000)
+        _TLS.elapsed_ms = spent
+        _TLS.total_ms = int(getattr(_TLS, "total_ms", 0) or 0) + spent
+
+
+def reset_timing() -> None:
+    """请求开始时清零累计计时（一次请求可能调用模型多次：分类兜底、提示、重试）。"""
+    _TLS.elapsed_ms = 0
+    _TLS.total_ms = 0
+
+
+def last_elapsed_ms() -> int:
+    """本线程**最近一次** `llm()` 调用的耗时（毫秒）；没调用过返回 0。"""
+    return int(getattr(_TLS, "elapsed_ms", 0) or 0)
+
+
+def total_elapsed_ms() -> int:
+    """自上次 `reset_timing()` 起，本线程**所有**模型调用耗时之和（毫秒）。"""
+    return int(getattr(_TLS, "total_ms", 0) or 0)
+
+
+def _llm_impl(system: str, user: str, *, temperature: float,
+              max_tokens: int) -> str:
     if not is_configured():
         return ("[桩·大模型] 未配置 PH_LLM_BASE_URL / PH_LLM_API_KEY / PH_LLM_MODEL，"
                 "此处为占位响应。")

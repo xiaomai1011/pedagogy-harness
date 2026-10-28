@@ -110,10 +110,17 @@ def match_rule(judge_result, code: str) -> str | None:
         return "环境"          # 超时（死循环、递归过深）
     if error_type == "syntax":
         return "语法"          # 判题器已判为语法错，无需再看 stderr
+    low = stderr.lower()
+    # ValueError 不整体归"边界"：输入转换失败 / 格式字符串错误属于**类型**问题
+    # （判据固定写在代码里，评测标签先行固定，不倒改标准答案）
+    if "valueerror" in low and any(k in low for k in (
+            "invalid literal for int", "could not convert",
+            "unsupported format character", "invalid format")):
+        return "类型"
     for error_class, names in RULE_TABLE:
         for name in names:
             # 大小写不敏感：`indexerror`、`Syntaxerror` 这类写法同样算证据
-            if name.lower() in stderr.lower():
+            if name.lower() in low:
                 return error_class
     if error_type == "wrong_output":
         return "逻辑"          # 程序正常结束，但结果与期望不符

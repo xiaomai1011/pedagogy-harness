@@ -15,6 +15,7 @@
 主干（本文件）只按 `registry.ordered()` 遍历组件，**不认识任何具体组件**。
 """
 
+import json
 import sqlite3
 import uuid
 from datetime import datetime
@@ -89,7 +90,7 @@ def _recent_state(participant_id: str, question_id: str) -> tuple[int, int]:
             (participant_id, question_id),
         ).fetchall()
     if not rows:
-        return 0, 0
+        return 0, db.get_hint_state(participant_id, question_id)["unlocked_level"]
     last_unlocked = int(rows[0]["hint_unlocked_level"])
     consecutive = 0
     for r in rows:
@@ -97,6 +98,8 @@ def _recent_state(participant_id: str, question_id: str) -> tuple[int, int]:
             consecutive += 1
         else:
             break
+    # 主动请求升级后，解锁上限可能高于任何提交行（纯提示不写 submission_log）
+    last_unlocked = max(last_unlocked, int(db.get_hint_state(participant_id, question_id)["unlocked_level"]))
     return consecutive, last_unlocked
 
 
@@ -154,7 +157,8 @@ def stage_classify_and_remember(*, request_id: str, question: dict, code: str,
                                   error_kp=classification.knowledge_point or "")
         if (judge_result.status != "pass" and enabled is not None
                 and enabled.is_enabled(em.NAME)):
-            em.remember_conn(conn, fresh["participant_id"], classification, ts)
+            em.remember_conn(conn, fresh["participant_id"], classification, ts,
+                             judge_error_type=judge_result.error_type)
         db.update_event_conn(conn, fresh["event_id"], progress="cls_mem_done")
         conn.execute("COMMIT")
     except Exception:
@@ -256,6 +260,9 @@ def _hint_event_fields(ctx: SubmissionContext, ts: str) -> dict:
     else:
         status = "unavailable"
     return {"status": status, "ts_end": _now(), "elapsed_ms": _elapsed_ms(ts, _now()),
+            # 独立模型耗时：一次请求里**所有**模型调用（分类兜底＋提示＋重试）之和；
+            # 与 `elapsed_ms`（整请求耗时，含判题）分开，便于把"判题/模型/学生作答"拆开。
+            "model_ms": llm_mod.total_elapsed_ms(),
             "hint_source": ctx.hint_source, "hint_level": ctx.hint_level,
             "unlocked_level": ctx.unlocked_level,
             "reason_code": "" if status != "unavailable" else "gen_unavailable",
@@ -313,11 +320,27 @@ def _student_log(payload: dict | None, *, phase_disabled: bool) -> dict | None:
 
 
 def _pipeline(*, participant_id: str, question_id: str, question: dict, code: str,
-              config: HarnessConfig, request_hint: bool, entry: str):
+              config: HarnessConfig, request_hint: bool, entry: str,
+              hint_request_id: str = ""):
     """两种入口共用的四步序列。返回 `(ctx, result, meta)`；前后测纯提示时 ctx／result 为 None。"""
     ts, request_id = _now(), uuid.uuid4().hex
     phase = _phase_of(question)
     teaching_on = _teaching_enabled(question)
+    llm_mod.reset_timing()   # 请求级模型计时：后面所有 llm() 调用都累计到本次请求
+
+    # ---- 幂等回放：同一次点击的重复到达（刷新/网络重试）----
+    # 不升级、不判题、不调模型，直接回放上次结果（契约 §5 提示阶梯修订）。
+    if entry == "hint" and hint_request_id:
+        st = db.get_hint_state(participant_id, question_id)
+        if st["last_request_id"] == hint_request_id and st["last_response"]:
+            try:
+                cached = json.loads(st["last_response"])
+            except ValueError:
+                cached = None
+            if cached is not None:
+                return None, None, {"replayed": True, "response": cached}
+
+    hint_state = db.get_hint_state(participant_id, question_id) if request_hint else None
 
     # ---- 提示事件：**受理有效请求时先建**（契约 §6.2.2），才能留下失败路径 ----
     hint_event_id = None
@@ -358,6 +381,8 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
 
     # 连败计数**含本次**，但**仅正式提交入口**计入（D 定案；纯提示复用同一次判题不得再计）
     consecutive_fail, last_unlocked = _recent_state(participant_id, question_id)
+    if hint_state is not None:
+        last_unlocked = max(last_unlocked, int(hint_state["unlocked_level"]))
     if entry == "submit" and result.status != "pass":
         consecutive_fail += 1
 
@@ -404,6 +429,7 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
         code=code, ts=ts, request_hint=request_hint, judge_result=result,
         last_unlocked=last_unlocked, consecutive_fail=consecutive_fail,
         is_formal_submission=(entry == "submit"), classification=classification,
+        unlocked_at_last_hint=int(hint_state["unlocked_at_last_hint"]) if hint_state else 0,
     )
     meta = {"request_id": request_id, "phase": phase, "ts": ts,
             "phase_disabled": not teaching_on, "teaching_on": teaching_on,
@@ -492,6 +518,29 @@ def _disabled_response(*, hint_requested: bool) -> dict:
     }
 
 
+_HINT_CACHE_KEYS = ("status", "error_type", "error_class", "knowledge_point", "hint_level",
+                    "unlocked_level", "memory_hint", "message", "judge_feedback", "source",
+                    "failed_cases", "stderr", "components")
+
+
+def _hint_cache(resp: dict) -> dict:
+    """只缓存**提示相关**字段：够回放，又不把整份响应（可能很大）存进库。"""
+    return {k: resp.get(k) for k in _HINT_CACHE_KEYS}
+
+
+def _remember_hint(participant_id: str, question_id: str, resp: dict, *,
+                   hint_request_id: str) -> None:
+    db.save_hint_state(
+        participant_id, question_id,
+        unlocked_level=int(resp.get("unlocked_level") or 0),
+        displayed_level=int(resp.get("hint_level") or 0),
+        unlocked_at_last_hint=int(resp.get("unlocked_level") or 0),
+        last_request_id=hint_request_id,
+        last_response=json.dumps(_hint_cache(resp), ensure_ascii=False),
+        ts=_now(),
+    )
+
+
 def handle_submission(*, participant_id: str, question_id: str, code: str,
                       config: HarnessConfig, request_hint: bool = False) -> dict:
     """学生**提交代码**：判题 ＋ 教学反馈 ＋ 落一行 `submission_log`（四步序列，契约 §6.3）。"""
@@ -499,20 +548,32 @@ def handle_submission(*, participant_id: str, question_id: str, code: str,
     ctx, result, meta = _pipeline(
         participant_id=participant_id, question_id=question_id, question=question,
         code=code, config=config, request_hint=request_hint, entry="submit")
-    return _response(ctx, result, log_payload=meta.get("log"), meta=meta)
+    resp = _response(ctx, result, log_payload=meta.get("log"), meta=meta)
+    if request_hint and meta.get("teaching_on"):
+        _remember_hint(participant_id, question_id, resp, hint_request_id="")
+    return resp
 
 
 def handle_hint_request(*, participant_id: str, question_id: str, code: str,
-                        config: HarnessConfig) -> dict:
+                        config: HarnessConfig, hint_request_id: str = "") -> dict:
     """学生**只想看提示、代码没改**：同样走判题 ＋ 教学组件 ＋ 防泄校验。
 
     **不写 `submission_log`**（`log` 恒为 `None`），也**不产生 `teaching` 事件**（契约 §6.5）；
     前后测阶段**提前返回、不调 judge、不调模型**（契约 §6.4）。
+    同一次点击的重复到达（`hint_request_id` 相同）**直接回放**，不升级、不判题、不调模型。
     """
     question = load_question(question_id)
     ctx, result, meta = _pipeline(
         participant_id=participant_id, question_id=question_id, question=question,
-        code=code, config=config, request_hint=True, entry="hint")
+        code=code, config=config, request_hint=True, entry="hint",
+        hint_request_id=hint_request_id)
+    if meta.get("replayed"):
+        cached = dict(meta.get("response") or {})
+        cached.update({"hint_requested": 1, "replayed": True, "log": None})
+        return cached
     if ctx is None:
         return _disabled_response(hint_requested=True)
-    return _response(ctx, result, log_payload=None, meta=meta)
+    resp = _response(ctx, result, log_payload=None, meta=meta)
+    if meta.get("teaching_on"):
+        _remember_hint(participant_id, question_id, resp, hint_request_id=hint_request_id)
+    return resp

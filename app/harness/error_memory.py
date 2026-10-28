@@ -32,23 +32,31 @@ def _safe_classification(classification) -> Classification:
     return Classification(error_class="未分类", knowledge_point="", source="none")
 
 
-def remember_conn(conn, participant_id: str, classification, ts: str) -> None:
+def remember_conn(conn, participant_id: str, classification, ts: str,
+                  judge_error_type: str = "") -> None:
     """**用调用方的连接**记账 —— 与分类回填、进度标记放进**同一个短事务**（契约 §6.3 第 2 步）。
 
-    「未分类」不记账：否则记忆里会堆一串无意义的「未分类/」，既污染统计，
-    也让预防性提示变成一句废话。
+    「未分类」的处理（2026-10-28 修订）：分类器被关闭时**不再静默丢弃**，而是记一条
+    **明确标记为未分类**的记录，并附带**可信的判题类别**（`wrong_output`/`syntax`/…）。
+    这样"记忆开、分类关"时组件仍能工作；同时不臆造知识点、不在记忆组件内部偷偷调模型。
+    如果连判题类别都没有（不是判题失败路径），则不记账。
     """
     classification = _safe_classification(classification)
-    if getattr(classification, "error_class", "未分类") == "未分类":
-        return
-    db.upsert_error_memory_conn(conn, participant_id, classification.error_class,
-                               getattr(classification, "knowledge_point", "") or "", ts)
+    error_class = getattr(classification, "error_class", "未分类")
+    knowledge_point = getattr(classification, "knowledge_point", "") or ""
+    if error_class == "未分类":
+        if not judge_error_type:
+            return
+        knowledge_point = ""      # 未分类时不留知识点，避免伪造画像
+    db.upsert_error_memory_conn(conn, participant_id, error_class, knowledge_point, ts,
+                                judge_error_type=judge_error_type if error_class == "未分类" else "")
 
 
-def remember(participant_id: str, classification, ts: str) -> None:
+def remember(participant_id: str, classification, ts: str,
+             judge_error_type: str = "") -> None:
     """把一次错误计入记忆表（自管连接的便利包装；主流程请走 `remember_conn`）。"""
     with db.connect() as conn:
-        remember_conn(conn, participant_id, classification, ts)
+        remember_conn(conn, participant_id, classification, ts, judge_error_type=judge_error_type)
 
 
 def preventive_hint(participant_id: str) -> str:
@@ -60,6 +68,9 @@ def preventive_hint(participant_id: str) -> str:
     for row in rows[:MAX_ITEMS]:
         knowledge_point = row.get("knowledge_point") or ""
         where = f"（知识点：{knowledge_point}）" if knowledge_point else ""
+        if row["error_class"] == "未分类":
+            kind = row.get("judge_error_type") or ""
+            where = f"（判题类别：{kind}）" if kind else "（判题类别未记录）"
         items.append(f"{row['error_class']}类错误 {row['count']} 次{where}")
     return "提醒一下：你此前反复出错的地方有 —— " + "、".join(items) + "。动笔前先留意。"
 

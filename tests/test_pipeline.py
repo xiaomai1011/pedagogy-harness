@@ -82,10 +82,11 @@ def test_hint_request_does_not_write_submission_log(monkeypatch):
     assert _log_count(pid) == before
 
 
-def test_repeated_hint_requests_do_not_escalate(monkeypatch):
-    """口径②-A 端到端回归：反复主动请求，等级由**连败**决定，不由点击次数决定。
+def test_repeated_hint_requests_raise_one_level_each(monkeypatch):
+    """口径（2026-10-28 修订）：每次**新的**主动请求最多升一级，且不因连败叠加跳两级。
 
-    该被试连续 3 次失败且每次请求：连败 3 次仍只解锁到 L1 → 三次展示都是 L1。
+    该被试连续 3 次失败且每次请求：连败每次都解锁不到新等级（fails=1/2/3 → 上限 0/1/1），
+    请求逐级推进 → 展示 1、2、3。
     """
     monkeypatch.setattr(llm_mod, "llm", lambda system, user: "提示正文")
     pid = "T_E2E_7"
@@ -94,8 +95,8 @@ def test_repeated_hint_requests_do_not_escalate(monkeypatch):
         out = handle_submission(participant_id=pid, question_id="P001", code="print(1)",
                                 config=PRESETS["exp"], request_hint=True)
         levels.append(out["hint_level"])
-    assert levels == [1, 1, 1]
-    assert out["log"]["hint_unlocked_level"] == 1
+    assert levels == [1, 2, 3]
+    assert out["log"]["hint_unlocked_level"] == 3
 
 
 # ---------------------------------------------------------------------------

@@ -10,11 +10,12 @@ import time
 import weakref
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app import access
 from app import db
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
 from app.harness import registry
@@ -173,6 +174,54 @@ class HintRequest(BaseModel):
     participant_id: str
     question_id: str
     code: str = ""              # 当前编辑器里的代码，供大模型看到"学生卡在哪"
+    hint_request_id: str = ""   # 同一次点击的幂等键（刷新/重试复用，服务端回放不升级）
+
+
+def _claims(x_access_code: str | None) -> access.Claims | None:
+    """解析实验访问码。未开启强制模式且没带码 → None（本地演示兼容）。
+
+    正式采集必须 `PH_REQUIRE_ACCESS_CODE=1`；此时缺失/过期/伪造一律在**判题之前**拒绝。
+    """
+    if not isinstance(x_access_code, str):
+        # 直接调用函数（测试/脚本）时拿到的是 FastAPI 的 Header 默认对象，按"没带码"处理
+        x_access_code = None
+    if not access.access_required() and not x_access_code:
+        return None
+    try:
+        return access.verify_code(x_access_code)
+    except access.AccessNotConfigured:
+        raise HTTPException(status_code=503, detail={
+            "status": "access_not_configured",
+            "message": "实验访问码未配置：服务端缺少签名密钥，本次请求未执行。",
+        })
+    except access.AccessError as exc:
+        raise HTTPException(status_code=403, detail={
+            "status": "access_denied", "code": exc.code,
+            "message": "实验访问码无效或已过期，本次请求未执行。",
+        })
+
+
+def _participant_of(body_participant_id: str, claims: access.Claims | None) -> str:
+    try:
+        return access.resolve_participant(body_participant_id, claims)
+    except access.AccessError as exc:
+        raise HTTPException(status_code=403, detail={
+            "status": "access_denied", "code": exc.code,
+            "message": "访问码与请求中的参与者不一致，本次请求未执行。",
+        })
+
+
+def _require_phase_allowed(question_id: str, claims: access.Claims | None) -> None:
+    """阶段必须由**服务端**根据题目与访问码判定，不能只信客户端传的 phase。"""
+    if claims is None:
+        return
+    question = load_question(question_id)
+    phase = (question or {}).get("phase", "practice")
+    if not claims.allows_phase(phase):
+        raise HTTPException(status_code=403, detail={
+            "status": "phase_not_allowed", "phase": phase,
+            "message": "当前访问码不允许进入该阶段题目，本次请求未执行。",
+        })
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -181,10 +230,15 @@ def index() -> str:
 
 
 @app.get("/api/questions")
-def api_questions() -> list[dict]:
+def api_questions(x_access_code: str = Header(default=None)) -> list[dict]:
+    """题目列表：带有效访问码时**只返回该批次允许的阶段**（服务端约束，不靠客户端传 phase）。"""
+    claims = _claims(x_access_code)
+    items = list_questions()
+    if claims is not None:
+        items = [q for q in items if claims.allows_phase(q.get("phase", ""))]
     return [{"id": q["id"], "title": q["title"], "difficulty": q.get("difficulty"),
              "phase": q.get("phase")}
-            for q in list_questions()]
+            for q in items]
 
 
 @app.get("/api/components")
@@ -223,8 +277,11 @@ def api_status() -> dict:
 
 
 @app.get("/api/questions/{question_id}")
-def api_question(question_id: str) -> dict:
+def api_question(question_id: str, x_access_code: str = Header(default=None)) -> dict:
     q = load_question(question_id)
+    claims = _claims(x_access_code)
+    if claims is not None:
+        _require_phase_allowed(claims, question_id)
     # 不下发参考解与隐藏用例
     q.pop("reference_solution", None)
     q["test_cases"] = [c for c in q.get("test_cases", []) if not c.get("hidden")]
@@ -251,13 +308,17 @@ def _isolation_refusal(exc, *, hint_requested: bool) -> dict:
 
 
 @app.post("/api/submit")
-def api_submit(req: SubmitRequest) -> dict:
+def api_submit(req: SubmitRequest,
+               x_access_code: str | None = Header(default=None, alias=access.HEADER_NAME)) -> dict:
     from app.harness import isolation
 
+    claims = _claims(x_access_code)
+    participant_id = _participant_of(req.participant_id, claims)
+    _require_phase_allowed(req.question_id, claims)
     _enter_single_lane()
     try:
         return handle_submission(
-            participant_id=req.participant_id,
+            participant_id=participant_id,
             question_id=req.question_id,
             code=req.code,
             config=_config(req.group),
@@ -270,21 +331,27 @@ def api_submit(req: SubmitRequest) -> dict:
 
 
 @app.post("/api/hint")
-def api_hint(req: HintRequest) -> dict:
+def api_hint(req: HintRequest,
+             x_access_code: str | None = Header(default=None, alias=access.HEADER_NAME)) -> dict:
     """学生**只想看提示、代码没改**：走同一套教学组件 + 防泄校验，但**不写日志**。
 
     这样"提交次数 / 首次通过率"不会被"只为看提示"的动作虚增（契约 §3 的 `submit_seq` 只由真提交推进）。
     **同一道安全门**：隔离不可用 ⇒ 同样拒绝执行、返回"未就绪"，不启动学生进程。
+    访问码无效/身份不符/阶段不符 ⇒ 同样在判题与模型调用之前拒绝。
     """
     from app.harness import isolation
 
+    claims = _claims(x_access_code)
+    participant_id = _participant_of(req.participant_id, claims)
+    _require_phase_allowed(req.question_id, claims)
     _enter_single_lane()
     try:
         return handle_hint_request(
-            participant_id=req.participant_id,
+            participant_id=participant_id,
             question_id=req.question_id,
             code=req.code,
             config=PRESETS["exp"],
+            hint_request_id=req.hint_request_id,
         )
     except isolation.IsolationUnavailable as exc:
         return _isolation_refusal(exc, hint_requested=True)

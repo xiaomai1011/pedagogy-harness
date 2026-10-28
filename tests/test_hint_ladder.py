@@ -49,27 +49,33 @@ def test_two_consecutive_failures_only_unlock():
     assert hl.next_state(prev_unlocked=1, consecutive_fail=4, requested=False) == (0, 2)
 
 
-def test_request_shows_unlocked_level_without_advancing():
-    """口径②-A：请求**只展示**已解锁的那一级，不再"至少推进一级"。"""
-    # 还没攒够连败（解锁为 0）→ 给 L1 打底，保证学生点了就有回应
-    assert hl.next_state(prev_unlocked=0, consecutive_fail=0, requested=True) == (1, 1)
-    # 连败 2 次解锁 L1 → 展示 L1
-    assert hl.next_state(prev_unlocked=1, consecutive_fail=2, requested=True) == (1, 1)
-    # 连败 4 次解锁 L2 → 展示 L2
-    assert hl.next_state(prev_unlocked=2, consecutive_fail=4, requested=True) == (2, 2)
+def test_active_request_raises_one_level_only():
+    """口径（2026-10-28 修订）：主动请求"更进一步提示"每次最多升一级。"""
+    # 首次请求：0 → L1
+    assert hl.next_state(prev_unlocked=0, consecutive_fail=0, requested=True,
+                         unlocked_at_last_hint=0) == (1, 1)
+    # 再请求一次：L1 → L2
+    assert hl.next_state(prev_unlocked=1, consecutive_fail=0, requested=True,
+                         unlocked_at_last_hint=1) == (2, 2)
+    # 封顶 L4
+    assert hl.next_state(prev_unlocked=4, consecutive_fail=0, requested=True,
+                         unlocked_at_last_hint=4) == (4, 4)
 
 
-def test_repeated_requests_never_raise_the_level():
-    """回归：反复点"请求提示"必须停在已解锁的那一级。
+def test_request_and_failure_do_not_stack():
+    """同一轮里"连败解锁"与"主动请求"同时满足时，不叠加跳两级。"""
+    # 连败 2 次已把上限抬到 L1；本次请求只展示 L1，不再 +1
+    assert hl.next_state(prev_unlocked=0, consecutive_fail=2, requested=True,
+                         unlocked_at_last_hint=0) == (1, 1)
+    # 下一次请求（没有新的失败）才会升到 L2
+    assert hl.next_state(prev_unlocked=1, consecutive_fail=2, requested=True,
+                         unlocked_at_last_hint=1) == (2, 2)
 
-    （改口径前这里是 1→2→3→4：点击次数本身就能把等级推满 L4。）
-    """
-    unlocked = 0
-    shown_levels = []
-    for _ in range(4):
-        shown, unlocked = hl.next_state(prev_unlocked=unlocked, consecutive_fail=0, requested=True)
-        shown_levels.append(shown)
-    assert shown_levels == [1, 1, 1, 1]
+
+def test_repeated_request_is_idempotent():
+    """重复到达（刷新/网络重试）不升级：调用方按 same request_id 回放。"""
+    assert hl.next_state(prev_unlocked=1, consecutive_fail=0, requested=True,
+                         unlocked_at_last_hint=1, repeat=True) == (0, 1)
 
 
 def test_unlock_caps_at_four():
@@ -95,10 +101,11 @@ def test_level0_gives_no_teaching_hint():
 
 
 def test_level0_unlocked_still_only_tells_how_to_ask():
-    """已解锁但没请求：不展示提示正文，也**不复述判题**；等级移交给前端头部一行展示。"""
+    """已解锁但没请求：不展示提示正文；文案要区分「重看」与「请求进一步提示」。"""
     ctx = _ctx(hint_level=0, unlocked_level=2)
     out, _src = hl.render(ctx)
-    assert "请求提示" in out
+    assert "重看提示" in out
+    assert "进一步提示" in out
     assert "未通过测试" not in out
     assert ctx.unlocked_level == 2
 

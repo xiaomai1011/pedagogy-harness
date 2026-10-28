@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS error_memory (
     participant_id TEXT NOT NULL,
     error_class    TEXT NOT NULL,
     knowledge_point TEXT NOT NULL,
+    judge_error_type TEXT NOT NULL DEFAULT '',
     count          INTEGER NOT NULL DEFAULT 0,
     last_seen_ts   TEXT NOT NULL,
     PRIMARY KEY (participant_id, error_class, knowledge_point)
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS event_log (
     ts_start       TEXT    NOT NULL,
     ts_end         TEXT,
     elapsed_ms     INTEGER,
+    model_ms       INTEGER,
     status         TEXT    NOT NULL,
     progress       TEXT    NOT NULL DEFAULT '',
     hint_level     INTEGER,
@@ -84,7 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_event_type_ts    ON event_log(event_type, ts_star
 
 _EVENT_COLUMNS = (
     "event_type", "request_id", "submission_id", "participant_id", "question_id",
-    "phase", "entry", "ts_start", "ts_end", "elapsed_ms", "status", "progress",
+    "phase", "entry", "ts_start", "ts_end", "elapsed_ms", "model_ms", "status", "progress",
     "hint_level", "unlocked_level", "hint_source", "judge_status",
     "reason_code", "reason",
 )
@@ -113,6 +115,59 @@ CREATE INDEX IF NOT EXISTS idx_isolation_request ON isolation_run_log(request_id
 
 _ISOLATION_COLUMNS = ("run_id", "request_id", "case_index", "phase", "event", "detail_code", "ts")
 
+# 契约 §5（2026-10-28 修订）：提示阶梯的**请求侧状态**。
+# 为什么不能只存在 submission_log：纯提示请求**不产生提交行**，而"主动请求升一级"
+# 必须在没有新提交的情况下也留痕，否则刷新页面就会把等级丢掉、或者反复点击被当成多次升级。
+# `last_request_id` 用于**幂等重放**：同一次点击的网络重试/页面刷新携带同一个 id，
+# 服务端直接回放上次结果，不升级、不重新判题、不重复调用模型。
+HINT_STATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS hint_state (
+    participant_id       TEXT    NOT NULL,
+    question_id          TEXT    NOT NULL,
+    unlocked_level       INTEGER NOT NULL DEFAULT 0,
+    displayed_level      INTEGER NOT NULL DEFAULT 0,
+    unlocked_at_last_hint INTEGER NOT NULL DEFAULT 0,
+    last_request_id      TEXT    NOT NULL DEFAULT '',
+    last_response        TEXT    NOT NULL DEFAULT '',
+    updated_ts           TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (participant_id, question_id)
+);
+"""
+
+
+def get_hint_state(participant_id: str, question_id: str) -> dict:
+    """读提示状态；没有记录时返回全零结构（不写库）。"""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM hint_state WHERE participant_id=? AND question_id=?",
+            (participant_id, question_id),
+        ).fetchone()
+    if row is None:
+        return {"participant_id": participant_id, "question_id": question_id,
+                "unlocked_level": 0, "displayed_level": 0, "unlocked_at_last_hint": 0,
+                "last_request_id": "", "last_response": "", "updated_ts": ""}
+    return dict(row)
+
+
+def save_hint_state(participant_id: str, question_id: str, *, unlocked_level: int,
+                    displayed_level: int, unlocked_at_last_hint: int,
+                    last_request_id: str, last_response: str, ts: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO hint_state (participant_id, question_id, unlocked_level,
+                   displayed_level, unlocked_at_last_hint, last_request_id, last_response, updated_ts)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(participant_id, question_id) DO UPDATE SET
+                   unlocked_level=excluded.unlocked_level,
+                   displayed_level=excluded.displayed_level,
+                   unlocked_at_last_hint=excluded.unlocked_at_last_hint,
+                   last_request_id=excluded.last_request_id,
+                   last_response=excluded.last_response,
+                   updated_ts=excluded.updated_ts""",
+            (participant_id, question_id, unlocked_level, displayed_level,
+             unlocked_at_last_hint, last_request_id, last_response, ts),
+        )
+
 _initialized = False
 
 
@@ -122,6 +177,13 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for col, ddl in _COLUMN_MIGRATIONS.items():
         if col not in have:
             conn.execute(ddl)
+    mem = {r["name"] for r in conn.execute("PRAGMA table_info(error_memory)").fetchall()}
+    if "judge_error_type" not in mem:
+        conn.execute("ALTER TABLE error_memory ADD COLUMN judge_error_type TEXT NOT NULL DEFAULT ''")
+    ev = {r["name"] for r in conn.execute("PRAGMA table_info(event_log)").fetchall()}
+    if "model_ms" not in ev:
+        # 历史行保持 NULL：**不回填伪造耗时**（契约 §6 修订）
+        conn.execute("ALTER TABLE event_log ADD COLUMN model_ms INTEGER")
 
 
 def connect() -> sqlite3.Connection:
@@ -138,6 +200,7 @@ def connect() -> sqlite3.Connection:
         conn.execute(MEMORY_SCHEMA)
         conn.executescript(EVENT_SCHEMA)
         conn.executescript(ISOLATION_SCHEMA)
+        conn.executescript(HINT_STATE_SCHEMA)
         _ensure_columns(conn)
         conn.commit()
         _initialized = True
@@ -277,14 +340,20 @@ def get_events(*, participant_id: str | None = None, request_id: str | None = No
 
 
 def upsert_error_memory_conn(conn: sqlite3.Connection, participant_id: str, error_class: str,
-                            knowledge_point: str, ts: str) -> None:
-    """**用调用方的连接**做 count+1 —— 与分类回填、进度标记放进**同一个短事务**（契约 §6.3 第 2 步）。"""
+                            knowledge_point: str, ts: str, judge_error_type: str = "") -> None:
+    """**用调用方的连接**做 count+1 —— 与分类回填、进度标记放进**同一个短事务**（契约 §6.3 第 2 步）。
+
+    `judge_error_type` 只有"未分类"记录才填：分类器关闭时要留下**可信的判题类别**
+    （`wrong_output`/`syntax`/`runtime`/`timeout`），用来替代不可得的知识点标签。
+    """
     conn.execute(
-        """INSERT INTO error_memory (participant_id, error_class, knowledge_point, count, last_seen_ts)
-           VALUES (?,?,?,1,?)
+        """INSERT INTO error_memory
+               (participant_id, error_class, knowledge_point, judge_error_type, count, last_seen_ts)
+           VALUES (?,?,?,?,1,?)
            ON CONFLICT(participant_id, error_class, knowledge_point)
-           DO UPDATE SET count = count + 1, last_seen_ts = excluded.last_seen_ts""",
-        (participant_id, error_class, knowledge_point, ts),
+           DO UPDATE SET count = count + 1, last_seen_ts = excluded.last_seen_ts,
+                         judge_error_type = excluded.judge_error_type""",
+        (participant_id, error_class, knowledge_point, judge_error_type, ts),
     )
 
 

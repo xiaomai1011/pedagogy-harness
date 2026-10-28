@@ -154,6 +154,7 @@
   <header class="titlebar">
     <h1>教学法 Harness 练习助手</h1>
     <label class="muted">被试编号 <input class="pid" id="pid" value="S01" /></label>
+    <label class="muted">实验访问码 <input class="pid" id="access" placeholder="负责人发放（可留空）" /></label>
     <span class="notice idle" id="op-state">就绪</span>
     <span class="spacer"></span>
     <!-- 组件徽标属**开发调试信息**：学生模式下默认收起，见「调试」开关 -->
@@ -181,6 +182,7 @@
     <div class="actionbar">
       <button class="btn primary" id="btn-submit" disabled>提交代码</button>
       <button class="btn" id="btn-hint" disabled>请求提示</button>
+      <button class="btn" id="btn-rehint" disabled>重看提示</button>
       <div class="sep"></div>
       <span class="notice idle" id="op-msg">选择题目后可提交</span>
       <!-- 等级信息只在①这里与②AI 区标题两处出现；机制解释收进 ⓘ 帮助 -->
@@ -190,7 +192,7 @@
         <span class="lvl" data-lvl="2">L2</span>
         <span class="lvl" data-lvl="3">L3</span>
         <span class="lvl" data-lvl="4">L4</span>
-        <span class="help" title="等级只作状态展示，不能点击升级。&#10;每连续失败 2 次解锁一级（2 次→L1，4 次→L2，6 次→L3，8 次→L4）；&#10;「请求提示」只展示已解锁的等级，不会把等级推高。">ⓘ</span>
+        <span class="help" title="等级只作状态展示，不能点击升级。&#10;每连续失败 2 次解锁一级；主动请求「进一步提示」每次最多升一级（上限 L4）；两者同时满足只升一级。&#10;「重看提示」只回放上一次已生成的提示，不会升级，也不会重新调用模型。">ⓘ</span>
       </span>
     </div>
 
@@ -228,6 +230,8 @@
     judgeStub: false,       // 服务端探测：判题器是否仍为桩
     isolationReady: true,   // 服务端探测：安全执行适配器是否已登记（未登记 ⇒ 提交会被拒绝）
     isolationNote: "",      // 未就绪时服务端给出的说明
+    lastHintRequestId: "",  // 上一次成功提示的请求号（「重看提示」复用它）
+    hintRequested: false,   // 本题是否已经请求过提示（决定按钮文案）
     busy: false
   };
   const PHASE_LABEL = { pretest: "前测", practice: "练习", posttest: "后测" };
@@ -313,6 +317,7 @@
     const ready = state.editorReady && !state.busy;
     $("btn-submit").disabled = !ready;
     $("btn-hint").disabled = !ready || !phaseAllowsTeaching();  // 前后测：禁用而非隐藏
+    $("btn-rehint").disabled = !ready || !state.lastHintRequestId || !phaseAllowsTeaching();
     $("btn-submit").classList.toggle("busy", state.busy);
     $("btn-hint").classList.toggle("busy", state.busy);
   }
@@ -321,11 +326,14 @@
     if (on) {
       notify("busy", which === "judge" ? "判题中…" : "提示生成中…", "op-msg");
       $("btn-submit").textContent = (which === "judge") ? "提交中…" : "提交代码";
-      $("btn-hint").textContent = (which === "hint") ? "生成中…" : "请求提示";
+      $("btn-hint").textContent = (which === "hint") ? "生成中…" : hintButtonLabel();
     } else {
       $("btn-submit").textContent = "提交代码";
-      $("btn-hint").textContent = "请求提示";
+      $("btn-hint").textContent = hintButtonLabel();
     }
+  }
+  function hintButtonLabel() {
+    return state.hintRequested ? "请求进一步提示" : "请求提示";
   }
 
   // ---------- 横幅 ----------
@@ -406,6 +414,11 @@
 
   async function selectQuestion(qid) {
     state.qid = qid;
+    // 切题：清掉「上一次提示」的本地回放号（服务器仍按题保存历史等级）
+    state.lastHintRequestId = "";
+    state.hintRequested = false;
+    $("btn-hint").textContent = hintButtonLabel();
+    refreshButtons();
     document.querySelectorAll(".q-item").forEach((el) => el.classList.toggle("sel", el.dataset.id === qid));
     state.question = await (await fetch(`/api/questions/${encodeURIComponent(qid)}`)).json();
     const q = state.question;
@@ -500,6 +513,12 @@
     // 未请求时的 0 表示"本次没有提示"，不是教学等级 L0 —— 不能显示成 L0。
     const disabled = d.source === "phase_disabled";
     const requested = !!d.hint_requested;
+    if (requested) {
+      state.hintRequested = true;
+      if (d.hint_request_id) state.lastHintRequestId = d.hint_request_id;
+    }
+    $("btn-hint").textContent = hintButtonLabel();
+    refreshButtons();
     $("h-hint").textContent = disabled ? "本阶段不提供提示"
       : (requested ? `本次提示 L${d.hint_level}｜已解锁至 L${d.unlocked_level}`
                    : `已解锁至 L${d.unlocked_level}`);
@@ -560,8 +579,20 @@
     try {
       const body = baseBody(); body.group = GROUP; body.request_hint = false;
       const r = await fetch("/api/submit", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json" }, accessHeaders()),
+        body: JSON.stringify(body)
       });
+      if (r.status === 429) {
+        const d = await r.json().catch(() => ({}));
+        notify("busy", (d.detail && d.detail.message) || "服务正忙：另一请求正在执行，请稍后再试；代码没有丢失。", "op-msg");
+        return;
+      }
+      if (r.status === 403) {
+        const d = await r.json().catch(() => ({}));
+        notify("bad", accessErrorText(d), "op-msg");
+        return;
+      }
       const d = await r.json();
       renderAll(d);
       if (d.status === "judge_unavailable") {
@@ -579,29 +610,65 @@
     } finally { setBusy(false, "judge"); }
   }
 
-  async function requestHint() {
+  async function requestHint(repeat) {
     if (state.busy) return;
     if (!phaseAllowsTeaching()) { notify("bad", "当前阶段不提供 AI 学习提示", "op-msg"); return; }
+    // 重看：复用上一次的请求号 ⇒ 服务端回放缓存，不升级、不调模型。
+    const reqId = repeat ? state.lastHintRequestId : newRequestId();
+    if (!reqId) { notify("bad", "还没有可重看的提示", "op-msg"); return; }
     setBusy(true, "hint");
+    let keepBusy = false;
     try {
       const body = baseBody();   // 走独立接口：不写 submission_log，不虚增"提交次数"
+      body.hint_request_id = reqId;
       const r = await fetch("/api/hint", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json" }, accessHeaders()),
+        body: JSON.stringify(body)
       });
-      renderAll(await r.json());
-      notify("ok", "提示已返回", "op-msg");
+      if (r.status === 429) {
+        // 单路执行闸门：服务端正忙。**不自动重试**，代码留在编辑器里。
+        keepBusy = true;
+        const d = await r.json().catch(() => ({}));
+        notify("busy", (d.detail && d.detail.message) || "服务正忙：另一请求正在执行，请稍后再试；代码没有丢失。", "op-msg");
+        return;
+      }
+      const d = await r.json();
+      if (r.status === 403) {
+        notify("bad", accessErrorText(d), "op-msg");
+        return;
+      }
+      if (!repeat) { state.hintRequested = true; state.lastHintRequestId = reqId; }
+      renderAll(d);
+      notify(repeat ? "ok" : "ok", repeat ? "已重新显示上次提示（未升级）" : "提示已返回", "op-msg");
     } catch (e) {
       if (e.message !== "no participant_id" && e.message !== "no question_id") {
         $("tab-hint").textContent = "请求失败：" + e;
         $("h-hint").textContent = "请求失败";
         notify("bad", "提示请求失败：网络或服务异常", "op-msg");
       }
-    } finally { setBusy(false, "hint"); }
+    } finally { if (!keepBusy) setBusy(false, "hint"); else refreshButtons(); }
+  }
+  function newRequestId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return "r-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  }
+  function accessHeaders() {
+    const code = ($("access").value || "").trim();
+    return code ? { "X-Access-Code": code } : {};
+  }
+  function accessErrorText(d) {
+    const s = (d && d.detail && d.detail.status) || "";
+    if (s === "access_denied") return "访问码无效或已过期，请联系负责人重新领取。";
+    if (s === "phase_not_allowed") return "该题不属于当前实验阶段，已拒绝（不会判题）。";
+    if (s === "identity_mismatch") return "被试编号与访问码不一致，请核对。";
+    return "请求被拒绝：" + s;
   }
 
   // ---------- 绑定 ----------
   $("btn-submit").onclick = submit;
-  $("btn-hint").onclick = requestHint;
+  $("btn-hint").onclick = () => requestHint(false);
+  $("btn-rehint").onclick = () => requestHint(true);
   $("btn-debug").onclick = () => { state.debug = !state.debug; applyDebug(); };
   $("pid").oninput = () => { $("st-pid").textContent = $("pid").value || "（未填编号）"; };
 

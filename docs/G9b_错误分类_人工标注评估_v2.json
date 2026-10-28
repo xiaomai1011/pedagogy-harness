@@ -1,0 +1,387 @@
+{
+  "summary": {
+    "dataset_version": "dataset_v2_2026-10-28",
+    "total": 27,
+    "correct": 24,
+    "wrong": 1,
+    "unclassified": 2,
+    "accuracy": 0.889,
+    "denominator": "全部样本（含未分类）：正确数 / 总样本数",
+    "by_class": {
+      "语法": {
+        "n": 5,
+        "correct": 5,
+        "wrong": 0,
+        "unclassified": 0,
+        "accuracy": 1.0
+      },
+      "类型": {
+        "n": 5,
+        "correct": 5,
+        "wrong": 0,
+        "unclassified": 0,
+        "accuracy": 1.0
+      },
+      "边界": {
+        "n": 5,
+        "correct": 5,
+        "wrong": 0,
+        "unclassified": 0,
+        "accuracy": 1.0
+      },
+      "逻辑": {
+        "n": 5,
+        "correct": 4,
+        "wrong": 1,
+        "unclassified": 0,
+        "accuracy": 0.8
+      },
+      "环境": {
+        "n": 5,
+        "correct": 5,
+        "wrong": 0,
+        "unclassified": 0,
+        "accuracy": 1.0
+      },
+      "无错误": {
+        "n": 2,
+        "correct": 2,
+        "wrong": -2,
+        "unclassified": 2,
+        "accuracy": 1.0
+      }
+    },
+    "no_error": {
+      "n": 2,
+      "false_positive": 0,
+      "false_positive_rate": 0.0,
+      "note": "无错误样本预测为空（未分类）视为正确——通过提交本就不该被分类；只有被强行归入五类才算误报。无错误样本只走分类器的判定口径；'通过提交不进入兜底/不写记忆'另有真实请求路径的测试（tests/test_memory_switch.py::test_pass_does_not_touch_memory）。"
+    },
+    "label_source": "团队人工标注（阅读代码与 traceback），**未经教师审核**；标签不取自系统预测",
+    "rule_vs_llm": {
+      "rule": 24,
+      "llm": 3
+    },
+    "notes": [
+      "上一版报告写'五类各 5 条 + 2 条无错误'却给出 25 条分母，构成描述矛盾；本版按 27 条重新计算。",
+      "ValueError 不整体归类：输入转换失败与格式字符串错误都按'类型'判定，规则固定后再评估，不倒改答案。",
+      "未分类计入分母；本版未分类数见 summary.unclassified。"
+    ],
+    "mismatches": [
+      [
+        "逻辑",
+        "环境",
+        "while True:\n    pass"
+      ],
+      [
+        "无错误",
+        "未分类",
+        "a, b = map(int, input().split())\nprint(a"
+      ],
+      [
+        "无错误",
+        "未分类",
+        "print('ok')"
+      ]
+    ]
+  },
+  "cases": [
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "syntax",
+      "stderr_tail": "SyntaxError: '(' was never closed",
+      "code": "print('hi'",
+      "note": ""
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "syntax",
+      "stderr_tail": "SyntaxError: expected ':'",
+      "code": "if True\n    pass",
+      "note": ""
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "syntax",
+      "stderr_tail": "IndentationError: expected an indented block",
+      "code": "def f():\npass",
+      "note": ""
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "syntax",
+      "stderr_tail": "TabError: inconsistent use of tabs and spaces",
+      "code": "if True:\n\tpass\n        pass",
+      "note": ""
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "syntax",
+      "stderr_tail": "NameError: name 'total' is not defined",
+      "code": "print(total)",
+      "note": "变量未定义，按语言层面错误归语法"
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "TypeError: unsupported operand type(s) for +: 'int' and 'str'",
+      "code": "print(1 + 'a')",
+      "note": ""
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "knowledge_point": "输入输出",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "ValueError: invalid literal for int() with base 10: 'abc'",
+      "code": "int('abc')",
+      "note": "输入转换失败 → 类型"
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "TypeError: object of type 'int' has no len()",
+      "code": "len(1)",
+      "note": ""
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "TypeError: 'NoneType' object is not subscriptable",
+      "code": "x = None\nprint(x[0])",
+      "note": ""
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "knowledge_point": "输入输出",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "ValueError: unsupported format character 'x'",
+      "code": "'%x' % 3.5",
+      "note": "格式字符串错误 → 类型"
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "knowledge_point": "列表",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "IndexError: list index out of range",
+      "code": "a = [1]\nprint(a[3])",
+      "note": ""
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "KeyError: 'k'",
+      "code": "d = {}\nprint(d['k'])",
+      "note": ""
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "knowledge_point": "列表",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "IndexError: list index out of range",
+      "code": "a = []\nprint(a[0])",
+      "note": "空输入边界"
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "ZeroDivisionError: division by zero",
+      "code": "print(1 // 0)",
+      "note": ""
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "knowledge_point": "列表",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "IndexError: string index out of range",
+      "code": "s = ''\nprint(s[1])",
+      "note": ""
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "knowledge_point": "循环",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "wrong_output",
+      "stderr_tail": "",
+      "code": "print(0)",
+      "note": "能跑通但答案错"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "knowledge_point": "循环",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "wrong_output",
+      "stderr_tail": "",
+      "code": "a, b = map(int, input().split())\nprint(a - b)",
+      "note": "运算符用错"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "环境",
+      "knowledge_point": "输入输出",
+      "source": "rule",
+      "status": "timeout",
+      "error_type": "timeout",
+      "stderr_tail": "",
+      "code": "while True:\n    pass",
+      "note": "死循环"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "knowledge_point": "循环",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "wrong_output",
+      "stderr_tail": "",
+      "code": "print(input())",
+      "note": "只回显输入"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "knowledge_point": "循环",
+      "source": "rule",
+      "status": "fail",
+      "error_type": "wrong_output",
+      "stderr_tail": "",
+      "code": "a, b = map(int, input().split())\nprint(a + b + 1)",
+      "note": "边界偏移"
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "MemoryError",
+      "code": "x = 'a' * (10 ** 12)",
+      "note": ""
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "RecursionError: maximum recursion depth exceeded",
+      "code": "def f():\n    return f()\nf()",
+      "note": ""
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "ModuleNotFoundError: No module named 'numpy'",
+      "code": "import numpy",
+      "note": ""
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "knowledge_point": "",
+      "source": "rule",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "FileNotFoundError: [Errno 2] No such file or directory: 'data.txt'",
+      "code": "open('data.txt')",
+      "note": ""
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "knowledge_point": "输入输出",
+      "source": "llm",
+      "status": "crash",
+      "error_type": "runtime",
+      "stderr_tail": "ConnectionError: 网络不可达",
+      "code": "import socket\nsocket.create_connection(('8.8.8.8', 53), 0.1)",
+      "note": ""
+    },
+    {
+      "human_label": "无错误",
+      "predicted": "未分类",
+      "knowledge_point": "",
+      "source": "none",
+      "status": "pass",
+      "error_type": "none",
+      "stderr_tail": "",
+      "code": "a, b = map(int, input().split())\nprint(a + b)",
+      "note": "正确解答"
+    },
+    {
+      "human_label": "无错误",
+      "predicted": "未分类",
+      "knowledge_point": "",
+      "source": "none",
+      "status": "pass",
+      "error_type": "none",
+      "stderr_tail": "",
+      "code": "print('ok')",
+      "note": "正确但无输入输出意义"
+    }
+  ]
+}

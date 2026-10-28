@@ -32,6 +32,8 @@ class SubmissionContext:
     last_unlocked: int           # 该被试在该题**已解锁**的提示等级上限
     consecutive_fail: int        # 该被试在该题的连续失败次数（**含本次**）
     is_formal_submission: bool    # 本次是否为**正式提交**入口（决定是否计一次失败 / 写记忆）
+    unlocked_at_last_hint: int = 0  # 上次提示请求时的解锁上限（判断"失败升级"是否已被消费）
+    hint_repeat: bool = False       # 本次请求是否为**重复到达**（刷新/重试），是则只回放不升级
 
     # ---- 组件产出（后跑的组件可读前面组件的产出）----
     classification: Any = None   # 错误分类器的产出
