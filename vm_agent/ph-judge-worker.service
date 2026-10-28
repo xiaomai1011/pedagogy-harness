@@ -1,0 +1,30 @@
+[Unit]
+Description=ph-judge-worker（phcode 身份，只执行内置固定样例）
+After=network.target
+Before=ph-judge-agent.service
+
+[Service]
+Type=simple
+User=phcode
+Group=phcode
+SupplementaryGroups=ph-judge
+WorkingDirectory=/var/lib/ph-code
+ExecStart=/usr/bin/python3 /opt/ph-judge-agent/ph_judge_worker.py --socket /run/ph-judge/worker.sock
+Restart=on-failure
+RestartSec=3
+
+# 身份与权限边界：不提升权限、看不到 /home、系统目录只读
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/ph-judge
+
+# 资源与网络上限（cgroup）：无 IPv4/IPv6 出口，只能走 Unix socket
+IPAddressDeny=any
+MemoryMax=512M
+CPUQuota=100%
+TasksMax=48
+
+Environment=PH_WORK_ROOT=/run/ph-judge/work
+Environment=PH_WORKER_SOCKET=/run/ph-judge/worker.sock

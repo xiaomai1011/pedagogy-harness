@@ -215,6 +215,30 @@ def test_api_status_separates_registered_from_ready():
 
 # ---------------------------------------------------------------- ④ 阶段规则不变
 
+def test_api_status_reports_readiness_layer():
+    """阶段 4.3：agent 自报分层时，状态页显示分层值而不是 `ready`。"""
+    from app import main
+
+    class _Layered:
+        def readiness(self) -> str:
+            return "execution_probe_passed"
+
+        def check_isolation(self) -> bool:
+            raise AssertionError("分层未到 ready 时不该再走 check_isolation")
+
+        def start(self, payload):
+            raise AssertionError("分层未到 ready 时绝不能进入执行")
+
+    isolation.clear_execution_adapter()
+    isolation.register_execution_adapter(_Layered())
+    try:
+        st = main.api_status()
+        assert st["isolation"] == "execution_probe_passed"
+        assert "仍会被拒绝" in st["isolation_note"]
+    finally:
+        isolation.clear_execution_adapter()
+
+
 def test_phase_disabled_pure_hint_still_returns_early(monkeypatch):
     """前后测纯提示：**不判题、不落执行事件**，也不被安全门改写成"未就绪"。"""
     isolation.clear_execution_adapter()

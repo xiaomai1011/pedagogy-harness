@@ -6,6 +6,7 @@
 import logging
 import os
 import time
+import weakref
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -60,7 +61,8 @@ def _register_configured_vm_agent() -> bool:
 VM_AGENT_REGISTERED = _register_configured_vm_agent()
 
 #: `/api/status` 的就绪探测缓存：只打 `/healthz` + 握手，**不启动任何执行**。
-_ISOLATION_PROBE = {"at": 0.0, "adapter_id": None, "state": "unknown"}
+#: 用弱引用记住是哪一个适配器，避免对象回收后 id 被复用导致误命中缓存。
+_ISOLATION_PROBE = {"at": 0.0, "adapter": None, "state": "unknown"}
 _ISOLATION_PROBE_TTL = 15.0
 
 _ISOLATION_NOTES = {
@@ -69,12 +71,26 @@ _ISOLATION_NOTES = {
         "判题环境已接入适配器，但就绪检查未通过：提交会被拒绝并记录为“未执行”，"
         "不会运行任何学生代码。"
     ),
+    "execution_probe_passed": (
+        "判题环境已连通、固定样例可执行；隔离能力尚未全部验证，"
+        "学生提交仍会被拒绝（不会执行）。"
+    ),
+    "isolation_capabilities_verified": (
+        "隔离能力自检通过，等待受控演示开关；学生提交仍会被拒绝。"
+    ),
     "ready": "",
+}
+
+#: agent 自报的分层 → `/api/status` 展示值（未知值一律按未就绪处理）
+_READINESS_STATES = {
+    "execution_probe_passed": "execution_probe_passed",
+    "isolation_capabilities_verified": "isolation_capabilities_verified",
+    "ready_for_controlled_demo": "ready",
 }
 
 
 def _isolation_state(adapter) -> str:
-    """返回 `not_configured` / `registered_unverified` / `ready`。
+    """返回 `not_configured` / `registered_unverified` / 分层值 / `ready`。
 
     **登记 ≠ 就绪**：只有适配器自检（health + 握手 + 能力位）通过才算 `ready`；
     探测失败一律按未就绪处理。结果按适配器身份缓存 15 秒，避免每次刷新都打网络。
@@ -83,16 +99,33 @@ def _isolation_state(adapter) -> str:
         return "not_configured"
     now = time.monotonic()
     cached = _ISOLATION_PROBE
-    if (cached["adapter_id"] == id(adapter)
+    ref = cached["adapter"]
+    if (ref is not None and ref() is adapter
             and cached["state"] != "unknown"
             and now - cached["at"] < _ISOLATION_PROBE_TTL):
         return cached["state"]
+
+    def _remember(state: str) -> str:
+        try:
+            handle = weakref.ref(adapter)
+        except TypeError:                      # 有些测试替身不支持弱引用
+            handle = None
+        _ISOLATION_PROBE.update(at=now, adapter=handle, state=state)
+        return state
+
+    probe = getattr(adapter, "readiness", None)
+    if callable(probe):
+        try:
+            layered = _READINESS_STATES.get(probe())
+        except Exception:  # noqa: BLE001 —— 探测失败就是未就绪，不能冒充可用
+            layered = None
+        if layered:
+            return _remember(layered)
     try:
         state = "ready" if adapter.check_isolation() else "registered_unverified"
     except Exception:  # noqa: BLE001 —— 探测失败就是未就绪，不能冒充可用
         state = "registered_unverified"
-    _ISOLATION_PROBE.update(at=now, adapter_id=id(adapter), state=state)
-    return state
+    return _remember(state)
 
 # 前端已隐藏分组下拉，这里再兜一层——挡住手工构造的改包请求，避免污染实验数据。
 if VENDOR_DIR.exists():

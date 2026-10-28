@@ -68,11 +68,11 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):                                     # /healthz
-        if self.server.capabilities.get("execute"):
-            return self._send(200, {"ok": True, "protocol": 1,
-                                    "capabilities": self.server.capabilities})
-        return self._send(200, {"ok": True, "protocol": 1,
-                                "capabilities": self.server.capabilities})
+        payload = {"ok": True, "protocol": 1,
+                   "capabilities": self.server.capabilities}
+        if getattr(self.server, "readiness", ""):
+            payload["readiness"] = self.server.readiness
+        return self._send(200, payload)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -168,6 +168,32 @@ def test_wrong_token_is_rejected_by_handshake(stub_server):
 
 
 # ---------------------------------------------------------------- 正常/异常映射
+
+# ---------------------------------------------------------------- 阶段 4.3 分层就绪
+
+def test_execution_probe_passed_is_not_ready(stub_server):
+    """固定样例能跑 ≠ 隔离能力已验证：分层未到最后一层必须拒绝。"""
+    httpd, url = stub_server
+    httpd.capabilities = {"execute": True, "file_isolation": False,
+                          "network_isolation": False, "resource_limits": False,
+                          "process_tree_kill": False}
+    httpd.readiness = "execution_probe_passed"
+    adapter = vma.VmAgentAdapter(url, TOKEN)
+
+    assert adapter.readiness() == "execution_probe_passed"
+    with pytest.raises(isolation.IsolationUnavailable) as ei:
+        adapter.check_isolation()
+    assert ei.value.detail_code == "not_ready"
+    assert "execution_probe_passed" in str(ei.value.detail or "")
+
+
+def test_capabilities_all_true_without_readiness_field_is_ready(stub_server):
+    """旧 agent 不带 readiness 字段时，退回"四项能力位全真"判定。"""
+    httpd, url = stub_server
+    adapter = vma.VmAgentAdapter(url, TOKEN)
+    assert adapter.readiness() == ""
+    assert adapter.check_isolation() is True
+
 
 def test_handshake_and_execute_roundtrip(stub_server):
     httpd, url = stub_server

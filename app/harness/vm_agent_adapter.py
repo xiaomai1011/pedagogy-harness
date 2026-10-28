@@ -39,6 +39,18 @@ REQUEST_TIMEOUT = 10.0
 _VALID_STATUS = frozenset({"pass", "fail", "timeout", "crash", "error"})
 _VALID_ERROR_TYPE = frozenset({"none", "syntax", "runtime", "timeout", "wrong_output"})
 
+#: agent 自报的就绪分层（阶段 4.3）；只有最后一层才允许恢复受控演示。
+READINESS_READY = "ready_for_controlled_demo"
+
+#: 未带 `readiness` 字段的旧 agent：四项隔离能力必须**全部为真**才算就绪。
+REQUIRED_CAPABILITIES = ("file_isolation", "network_isolation",
+                         "resource_limits", "process_tree_kill")
+
+#: agent 允许自报的分层取值（未知值一律按未就绪处理）
+_READINESS_VALUES = frozenset({"execution_probe_passed",
+                               "isolation_capabilities_verified",
+                               READINESS_READY})
+
 
 class _Response:
     __slots__ = ("status", "body")
@@ -68,6 +80,17 @@ class VmAgentAdapter:
         """运维/状态页可见的**非敏感**信息（不含 token）。"""
         return {"kind": "vm-agent", "url": self.base_url, "protocol": self.protocol}
 
+    def readiness(self) -> str:
+        """agent 自报的就绪分层；连不上或字段未知时返回空串（调用方按未就绪处理）。"""
+        try:
+            health = self._request("GET", "/healthz", None, self.connect_timeout)
+        except isolation.IsolationUnavailable:
+            return ""
+        if health.status != 200:
+            return ""
+        value = str(health.body.get("readiness") or "")
+        return value if value in _READINESS_VALUES else ""
+
     def check_isolation(self) -> bool:
         """就绪返回 `True`；否则抛 `IsolationUnavailable`（**不启动任何执行**）。"""
         health = self._request("GET", "/healthz", None, self.connect_timeout)
@@ -76,9 +99,22 @@ class VmAgentAdapter:
                 "agent_rejected", f"健康检查返回 {health.status}")
         caps = health.body.get("capabilities") or {}
         if caps.get("execute") is not True:
-            # 阶段 2 的正常状态：agent 只握手不执行
+            # 阶段 2/3 的正常状态：agent 只握手不执行
             raise isolation.IsolationUnavailable(
                 "not_ready", "VM agent 已连通，但执行能力尚未启用")
+
+        readiness = str(health.body.get("readiness") or "")
+        if readiness:
+            # 阶段 4.3：固定样例通过 ≠ 隔离能力已验证，只有最后一层才放行
+            if readiness != READINESS_READY:
+                raise isolation.IsolationUnavailable(
+                    "not_ready", f"VM agent 就绪分层为 {readiness}，尚未完成隔离验收")
+        else:
+            missing = [name for name in REQUIRED_CAPABILITIES
+                       if caps.get(name) is not True]
+            if missing:
+                raise isolation.IsolationUnavailable(
+                    "not_ready", "隔离能力未全部验证：" + ",".join(missing))
 
         handshake = self._request("POST", "/v1/handshake",
                                   {"protocol": self.protocol}, self.connect_timeout)
