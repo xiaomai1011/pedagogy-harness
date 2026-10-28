@@ -289,9 +289,9 @@ def api_question(question_id: str, x_access_code: str = Header(default=None)) ->
     claims = _claims(x_access_code)
     if claims is not None:
         _require_phase_allowed(claims, question_id)
-    # 不下发参考解与隐藏用例
+    # 不下发参考解与评测用例：题面示例走 examples，用例一律提交后才在判题结果里体现
     q.pop("reference_solution", None)
-    q["test_cases"] = [c for c in q.get("test_cases", []) if not c.get("hidden")]
+    q.pop("test_cases", None)
     return q
 
 
