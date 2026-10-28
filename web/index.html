@@ -67,7 +67,7 @@
       border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; font-size: 14px; line-height: 1.9; }
     .ex-card .row { display: flex; gap: 10px; }
     .ex-card .row .k { color: var(--fg-dim); min-width: 56px; }
-    .ex-card code, .io-req code { font-family: Consolas, Menlo, monospace; color: #ce9178; font-size: 14px; }
+    .ex-card code, .io-req code { font-family: Consolas, Menlo, monospace; color: #ce9178; font-size: 14px; white-space: pre-wrap; }
     .muted { color: var(--fg-dim); }
     .weak { color: var(--fg-weak); }
 
@@ -113,6 +113,7 @@
     .result-body { padding: 14px 16px; overflow: auto; flex: 1; line-height: 1.8; font-size: 15px; }
     .result-body.mono { font-family: Consolas, Menlo, monospace; font-size: 14px; white-space: pre-wrap; }
     .case { border-left: 2px solid var(--line); padding-left: 12px; margin: 12px 0; line-height: 1.8; }
+    .case .muted { white-space: pre-wrap; }
     .case.hidden { border-left-color: var(--warn); }
     .hint-text { white-space: pre-wrap; line-height: 1.9; }
     .kp { margin-top: 14px; color: var(--fg-dim); font-size: 14px; }
@@ -247,6 +248,8 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s === undefined || s === null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // 题面是纯文本+少量 **加粗** 标记：先转义再只把 **…** 变成 <b>，不引入其它 HTML
+  const richText = (s) => esc(s).replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
 
   // ---------- 编辑器 ----------
   function getCode() { return state.usingMonaco ? monacoEditor.getValue() : $("code-ta").value; }
@@ -452,7 +455,7 @@
       <h2 class="q-title">${esc(q.id)} · ${esc(q.title)}</h2>
       <div class="q-meta">难度 ${esc(q.difficulty)}　·　阶段 ${esc(PHASE_LABEL[q.phase] || q.phase || "未标注")}</div>
       <h3 class="sec">题目说明</h3>
-      <div class="q-stmt">${esc(q.statement)}</div>
+      <div class="q-stmt">${richText(q.statement)}</div>
       <h3 class="sec">输入输出要求</h3>
       <div class="io-req">
         <div><span class="k">输入</span>　读入的内容见下方示例；<b>同一行</b>内的多个数据以空格分隔。</div>
