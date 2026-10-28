@@ -443,6 +443,11 @@
     document.querySelectorAll(".q-item").forEach((el) => el.classList.toggle("sel", el.dataset.id === qid));
     state.question = await (await fetch(`/api/questions/${encodeURIComponent(qid)}`)).json();
     const q = state.question;
+    // 示例与公开用例来自题库同一批样例，逐条比对去重：能一对一对上的不再重复展示
+    const norm = (s) => String(s ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").trim();
+    const exList = q.examples || [];
+    const visibleCases = (q.test_cases || []).filter((c) =>
+      !exList.some((e) => norm(e.input) === norm(c.input) && norm(e.output) === norm(c.expected)));
     $("qdetail").innerHTML = `
       <h2 class="q-title">${esc(q.id)} · ${esc(q.title)}</h2>
       <div class="q-meta">难度 ${esc(q.difficulty)}　·　阶段 ${esc(PHASE_LABEL[q.phase] || q.phase || "未标注")}</div>
@@ -454,18 +459,18 @@
         <div><span class="k">输出</span>　按题目说明输出结果；<b>不要</b>输出多余的文字或提示语。</div>
       </div>
       <h3 class="sec">示例</h3>
-      ${(q.examples || []).map((e) => `
+      ${exList.map((e) => `
         <div class="ex-card">
           <div class="row"><span class="k">输入</span><code>${esc(e.input)}</code></div>
           <div class="row"><span class="k">输出</span><code>${esc(e.output)}</code></div>
           ${e.explain ? `<div class="row"><span class="k">说明</span><span class="muted">${esc(e.explain)}</span></div>` : ""}
         </div>`).join("") || '<span class="muted">无</span>'}
-      <h3 class="sec">可见用例</h3>
-      ${(q.test_cases || []).map((c) => `
+      ${visibleCases.length ? `<h3 class="sec">可见用例</h3>
+      ${visibleCases.map((c) => `
         <div class="ex-card">
           <div class="row"><span class="k">输入</span><code>${esc(c.input)}</code></div>
           <div class="row"><span class="k">期望</span><code>${esc(c.expected)}</code></div>
-        </div>`).join("") || '<span class="muted">无</span>'}`;
+        </div>`).join("")}` : ""}`;
     $("st-qid").textContent = q.id;
     $("st-phase").textContent = "阶段 " + (PHASE_LABEL[q.phase] || q.phase || "未标注");
     refreshBanner(); refreshButtons();
