@@ -209,6 +209,9 @@ def _parse_llm_reply(raw: str, points: list[str]) -> Classification:
 
 
 def _llm_classify(judge_result, code: str, question: dict) -> Classification:
+    if not llm_mod.is_configured():
+        # 没有模型就没有兜底分类：宁可空着，也不把占位文本当成分类结果
+        return Classification(error_class="未分类", knowledge_point="", source="none")
     points = [p for p in (question or {}).get("knowledge_points", []) if p]
     # F：送进分类模型的报错同样是过滤后的视图（隐藏用例数据不得进入模型上下文）
     err = redaction.model_stderr(judge_result, question)[:500]

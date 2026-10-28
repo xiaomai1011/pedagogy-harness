@@ -779,7 +779,6 @@
     const reqId = repeat ? state.lastHintRequestId : newRequestId();
     if (!reqId) { notify("bad", "还没有可重看的提示", "op-msg"); return; }
     setBusy(true, "hint");
-    let keepBusy = false;
     try {
       const body = baseBody();   // 走独立接口：不写 submission_log，不虚增"提交次数"
       body.hint_request_id = reqId;
@@ -789,8 +788,8 @@
         body: JSON.stringify(body)
       });
       if (r.status === 429) {
-        // 单路执行闸门：服务端正忙。**不自动重试**，代码留在编辑器里。
-        keepBusy = true;
+        // 单路执行闸门：服务端正忙。**不自动重试**，代码留在编辑器里；
+        // 必须回到可操作状态（按钮恢复），否则用户会被永久卡在"生成中"。
         const d = await r.json().catch(() => ({}));
         notify("busy", (d.detail && d.detail.message) || "服务正忙：另一请求正在执行，请稍后再试；代码没有丢失。", "op-msg");
         return;
@@ -811,7 +810,7 @@
         $("h-hint").textContent = "请求失败";
         notify("bad", "提示请求失败：网络或服务异常", "op-msg");
       }
-    } finally { if (!keepBusy) setBusy(false, "hint"); else refreshButtons(); }
+    } finally { setBusy(false, "hint"); }
   }
   function newRequestId() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();

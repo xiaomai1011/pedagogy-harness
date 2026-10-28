@@ -19,6 +19,7 @@ from app import access
 from app import admin
 from app import db
 from app import enroll
+from app import llm as _llm
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
 from app.harness import registry
 from app.harness.config_switch import PRESETS
@@ -29,6 +30,7 @@ from app.questions import list_questions, load_question
 
 app = FastAPI(title="pedagogy-harness")
 app.include_router(admin.router)
+APP_VERSION = "0.5.0-boundary"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 VENDOR_DIR = WEB_DIR / "vendor"
 
@@ -328,7 +330,9 @@ def api_status() -> dict:
     return {"judge": "stub" if stub else "real",
             "isolation": state,
             "note": "当前为模拟判题，结果不代表真实代码执行。" if stub else "",
-            "isolation_note": _ISOLATION_NOTES[state]}
+            "isolation_note": _ISOLATION_NOTES[state],
+            "model": "configured" if _llm.is_configured() else "not_configured",
+            "version": APP_VERSION}
 
 
 @app.get("/api/questions/{question_id}")
@@ -337,10 +341,35 @@ def api_question(question_id: str, x_access_code: str = Header(default=None)) ->
     claims = _claims(x_access_code)
     if claims is not None:
         _require_phase_allowed(question_id, claims)
+    _require_published(question_id)
     # 不下发参考解与评测用例：题面示例走 examples，用例一律提交后才在判题结果里体现
     q.pop("reference_solution", None)
     q.pop("test_cases", None)
     return q
+
+
+def _require_published(question_id: str) -> None:
+    """发布名单一旦启用（表里已有记录），所有入口必须一致生效。
+
+    只过滤列表等于「看不见但调得动」：知道题号仍能读题、提交、请求提示。
+    """
+    published = admin.published_ids()
+    if published is not None and question_id not in published:
+        raise HTTPException(status_code=403, detail={
+            "status": "question_not_published",
+            "message": "该题目不在本轮发布名单中，本次请求未执行。",
+        })
+
+
+def _require_model_ready() -> None:
+    """实验模式下缺模型 ⇒ 明确报未就绪；不得用占位文本冒充真实提示。"""
+    from app import llm
+
+    if llm.experiment_mode() and not llm.is_configured():
+        raise HTTPException(status_code=503, detail={
+            "status": "model_not_configured",
+            "message": "教学模型未配置：本次提示未生成，也不会记为模型成功（不计入提示等级）。",
+        })
 
 
 def _isolation_refusal(exc, *, hint_requested: bool) -> dict:
@@ -387,6 +416,9 @@ def api_submit(req: SubmitRequest, request: Request = None,
     claims = _claims(x_access_code)
     participant_id = _participant_of(req.participant_id, claims, request)
     _require_phase_allowed(req.question_id, claims)
+    _require_published(req.question_id)
+    if req.request_hint:
+        _require_model_ready()
     _enter_single_lane()
     try:
         return handle_submission(
@@ -416,6 +448,8 @@ def api_hint(req: HintRequest, request: Request = None,
     claims = _claims(x_access_code)
     participant_id = _participant_of(req.participant_id, claims, request)
     _require_phase_allowed(req.question_id, claims)
+    _require_published(req.question_id)
+    _require_model_ready()
     _enter_single_lane()
     try:
         return handle_hint_request(

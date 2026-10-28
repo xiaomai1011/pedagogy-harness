@@ -130,6 +130,10 @@ def _llm_hint(ctx) -> tuple[str, str]:
             raise
         return leak_guard.fallback(ctx.hint_level, ctx.classification), "fallback"
 
+    if llm_mod.is_stub_text(text):
+        # 开发占位文本：如实标成 stub，不伪装成模型成功（实验模式由 API 层直接拒绝）
+        return text, "stub"
+
     violation = leak_guard.violates(text, ctx.hint_level, ctx.question)
     if violation is None:
         return text, "llm"

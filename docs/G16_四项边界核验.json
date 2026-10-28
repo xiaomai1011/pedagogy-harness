@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-10-28T16:43:53+0800",
+  "items": {
+    "model_hint": {
+      "http_path": "pipeline.handle_hint_request",
+      "hint_level": 1,
+      "source_recorded": "llm",
+      "model_ms_recorded": 2440,
+      "status": "returned_model",
+      "request_ms": 2708,
+      "text_prefix": "与你需要的关键词：循环（如 `for`）、下标/位置计数、比较、最大值变量。可留",
+      "looks_like_stub": false,
+      "llm_configured": true
+    },
+    "budget_5cases": {
+      "cases": 5,
+      "per_case_sleep_s": 2.4,
+      "elapsed_ms": 12108,
+      "old_request_timeout_s": 10.0,
+      "budget_timeout_s": 45.0,
+      "status": "pass",
+      "passed_cases": 5,
+      "total_cases": 5,
+      "exec_ms": 12097
+    }
+  }
+}

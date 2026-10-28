@@ -127,9 +127,14 @@ class VmAgentAdapter:
         return True
 
     def start(self, payload) -> JudgeResult:
-        """把一次判题请求交给 VM agent，并把响应收回成 `JudgeResult`。"""
+        """把一次判题请求交给 VM agent，并把响应收回成 `JudgeResult`。
+
+        等待时间必须与**同一套整任务预算**对齐：agent 侧是
+        `min(120, 每用例超时 × 用例数 + 15)`，宿主按同一公式加 5 秒余量等待，
+        否则多用例合法执行会被宿主提前判成“不可达”。
+        """
         body = self._build_request(payload)
-        resp = self._request("POST", "/v1/execute", body, self.request_timeout)
+        resp = self._request("POST", "/v1/execute", body, self._budget_timeout(body))
         if resp.status != 200:
             code = str(resp.body.get("error_code") or "")
             # 清理失败 ⇒ 用受控的清理类 detail_code 记录，避免被当成通道故障
@@ -185,9 +190,22 @@ class VmAgentAdapter:
                 body = {}
             return _Response(exc.code, body)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            # 连不上、DNS、连接被重置、读超时：一律按不可用处理 ⇒ fail closed
+            # 读超时 ≠ 学生代码错误：它是**整任务预算/通道**问题，单独记码，便于区分。
+            if isinstance(exc, TimeoutError):
+                raise isolation.IsolationUnavailable(
+                    "channel_unavailable",
+                    "等待 VM agent 返回超时（整任务预算或通道问题，非学生代码错误）",
+                ) from exc
+            # 连不上、DNS、连接被重置：按不可用处理 ⇒ fail closed
             raise isolation.IsolationUnavailable(
                 "agent_unreachable", f"VM agent 不可达：{type(exc).__name__}") from exc
+
+    def _budget_timeout(self, body: dict) -> float:
+        """与 agent 的整任务预算对齐（agent: min(120, 每用例超时×用例数+15)）。"""
+        cases = body.get("test_cases") or []
+        per_case = float(body.get("timeout") or TIMEOUT_SECONDS)
+        worker_budget = min(120.0, per_case * max(1, len(cases)) + 15.0)
+        return max(self.request_timeout, worker_budget + 5.0)
 
     def _to_result(self, body: dict) -> JudgeResult:
         status = str(body.get("status") or "error")

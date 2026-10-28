@@ -68,6 +68,23 @@ DEFAULT_MAX_TOKENS = 3000
 DEFAULT_REASONING_EFFORT = ""
 
 
+STUB_PREFIX = "[桩·大模型]"
+
+
+def experiment_mode() -> bool:
+    """实验模式：强制访问码，或显式 ``PH_EXPERIMENT_MODE=1``。
+
+    实验模式下**不允许**用开发占位文本冒充真实教学提示：缺模型就明确报未就绪。
+    """
+    return (os.environ.get("PH_REQUIRE_ACCESS_CODE", "").strip() == "1"
+            or os.environ.get("PH_EXPERIMENT_MODE", "").strip() == "1")
+
+
+def is_stub_text(text: str) -> bool:
+    """是否是开发占位文本（未配置模型时的兜底），而不是模型真实输出。"""
+    return (text or "").lstrip().startswith(STUB_PREFIX)
+
+
 def is_configured() -> bool:
     """三项配置是否齐全。"""
     return all(os.environ.get(k) for k in REQUIRED)
