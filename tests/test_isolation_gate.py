@@ -187,9 +187,30 @@ def test_api_status_reports_isolation_not_configured():
 
     isolation.register_execution_adapter(_AdapterRaisesWhileExecuting())
     st2 = main.api_status()
-    assert st2["isolation"] == "configured"
+    assert st2["isolation"] == "ready"
     assert st2["isolation_note"] == ""
     isolation.clear_execution_adapter()
+
+
+def test_api_status_separates_registered_from_ready():
+    """登记 ≠ 就绪：自检不过的适配器只能报 `registered_unverified`。"""
+    from app import main
+
+    class _NeverReady:
+        def check_isolation(self) -> bool:
+            raise isolation.IsolationUnavailable("not_ready")
+
+        def start(self, payload):
+            raise AssertionError("自检没过绝不能进入执行")
+
+    isolation.clear_execution_adapter()
+    isolation.register_execution_adapter(_NeverReady())
+    try:
+        st = main.api_status()
+        assert st["isolation"] == "registered_unverified"
+        assert "未就绪" in st["isolation_note"] or "未通过" in st["isolation_note"]
+    finally:
+        isolation.clear_execution_adapter()
 
 
 # ---------------------------------------------------------------- ④ 阶段规则不变

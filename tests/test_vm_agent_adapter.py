@@ -232,3 +232,31 @@ def test_no_registration_by_default():
     assert isolation.registered_execution_adapter() is None
     with pytest.raises(isolation.IsolationUnavailable):
         isolation.guarded_execute(None, {"question": {}, "code": ""})
+
+
+def test_startup_registration_is_opt_in(monkeypatch):
+    """启动登记只认 `PH_VM_AGENT_ENABLED=1`；开关关闭时保持未登记。"""
+    from app import main as main_mod
+
+    isolation.clear_execution_adapter()
+    monkeypatch.setattr(main_mod, "VM_AGENT_ENABLED", False)
+    assert main_mod._register_configured_vm_agent() is False
+    assert isolation.registered_execution_adapter() is None
+
+
+def test_startup_registration_registers_adapter_when_enabled(monkeypatch):
+    from app import main as main_mod
+
+    monkeypatch.setattr(main_mod, "VM_AGENT_ENABLED", True)
+    monkeypatch.setenv("PH_VM_AGENT_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("PH_VM_AGENT_TOKEN", "t" * 16)
+    try:
+        assert main_mod._register_configured_vm_agent() is True
+        adapter = isolation.registered_execution_adapter()
+        assert adapter is not None
+        assert adapter.base_url == "http://127.0.0.1:9"
+        # 登记 ≠ 就绪：agent 不可达时仍必须拒判
+        with pytest.raises(isolation.IsolationUnavailable):
+            isolation.guarded_execute(adapter, {"question": {}, "code": ""})
+    finally:
+        isolation.clear_execution_adapter()

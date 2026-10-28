@@ -334,9 +334,10 @@
     let kind = "";
     if (state.judgeStub) { lines.push(`<b>⚠ 模拟判题</b>　${esc(STUB_NOTE)}`); kind = "stub"; }
     if (!state.isolationReady) {
-      // 安全门：未接入隔离执行环境时，服务端会拒绝判题；提前讲清"不会在你的电脑上跑代码"
-      lines.push('<b>⚠ 判题环境未就绪</b>　本次部署尚未接入安全执行环境，'
-        + '提交会被拒绝并记录为"未执行"，不会运行任何学生代码。');
+      // 安全门：未接入/未就绪时服务端会拒绝判题；提前讲清"不会在你的电脑上跑代码"
+      lines.push('<b>⚠ 判题环境未就绪</b>　'
+        + esc(state.isolationNote
+          || '本次部署尚未接入安全执行环境，提交会被拒绝并记录为"未执行"，不会运行任何学生代码。'));
       kind = kind || "stub";
     }
     if (state.question && PHASE_NOTE[state.question.phase]) {
@@ -362,7 +363,7 @@
     try {
       const s = await (await fetch("/api/status")).json();
       state.judgeStub = s.judge === "stub";
-      state.isolationReady = s.isolation !== "not_configured";
+      state.isolationReady = s.isolation === "ready";
       state.isolationNote = s.isolation_note || "";
     } catch (e) {
       state.judgeStub = false;
