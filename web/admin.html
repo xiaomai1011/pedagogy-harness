@@ -43,9 +43,11 @@
   <span class="muted">仅本机可用 · 只读监控 / 发题 / 发码 / 导出</span>
   <span class="spacer"></span>
   <input id="token" type="password" placeholder="管理令牌" style="width:200px" />
+  <button id="btn-paste" title="从剪贴板读取并填入令牌">粘贴</button>
   <button class="primary" id="btn-connect">连接</button>
   <button id="btn-refresh">刷新</button>
   <span id="conn" class="muted">未连接</span>
+  <span class="muted" style="font-size:12px">令牌在 vmkey\ph_admin_token.txt（64 位）</span>
 </header>
 
 <main>
@@ -53,6 +55,7 @@
 
   <div class="tabs" id="tabs">
     <button data-tab="board" class="on">进度看板</button>
+    <button data-tab="devices">电脑编号</button>
     <button data-tab="submissions">提交记录</button>
     <button data-tab="events">事件日志</button>
     <button data-tab="questions">发题</button>
@@ -65,6 +68,13 @@
       <span class="muted">参与者 × 题目：做题次数 / 通过次数 / 最高提示等级 / 最近活动</span>
     </div>
     <div class="wrap"><table id="t-board"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section id="panel-devices" hidden>
+    <div class="row">
+      <span class="muted">自动登记模式（PH_AUTO_ENROLL=1）下，学生第一次打开页面时由服务端分配编号并记住这台电脑；清 Cookie 或换浏览器会拿到新编号。</span>
+    </div>
+    <div class="wrap"><table id="t-dev"><thead></thead><tbody></tbody></table></div>
   </section>
 
   <section id="panel-submissions" hidden>
@@ -125,9 +135,21 @@ function esc(s) { return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt
 
 async function api(path, opts) {
   const resp = await fetch(path, Object.assign({ headers: tokenHeaders() }, opts || {}));
-  if (resp.status === 403) throw new Error("令牌无效，或本机以外的地址访问被拒绝");
-  if (resp.status === 404) throw new Error("管理接口未启用：服务端没有配置 PH_ADMIN_TOKEN_FILE");
-  if (!resp.ok) throw new Error("请求失败 " + resp.status);
+  if (!resp.ok) {
+    let detail = {};
+    try { detail = (await resp.json()).detail || {}; } catch (e) { /* 非 JSON */ }
+    const code = (detail && detail.status) || "";
+    if (resp.status === 403 && code === "admin_local_only") {
+      throw new Error("只能在跑服务的这台机器上，用 127.0.0.1:8010 打开管理台；换 IP 或局域网访问会被拒");
+    }
+    if (resp.status === 403) {
+      throw new Error("令牌不对：请粘贴 vmkey\\ph_admin_token.txt 里的 64 位令牌（不是 ph_judge_agent_token）");
+    }
+    if (resp.status === 404) {
+      throw new Error("管理接口未启用：服务端没有配置 PH_ADMIN_TOKEN_FILE，重启一次启动器");
+    }
+    throw new Error("请求失败 " + resp.status + (code ? "：" + code : ""));
+  }
   return resp.json();
 }
 
@@ -172,6 +194,7 @@ async function refresh() {
   try {
     await loadSummary();
     if (state.tab === "board") await loadBoard();
+    if (state.tab === "devices") table($("t-dev"), await api("/api/admin/enrollments"));
     if (state.tab === "submissions") await loadSubs();
     if (state.tab === "events") await loadEvents();
     if (state.tab === "questions") await loadQuestions();
@@ -185,7 +208,7 @@ async function refresh() {
 function showTab(name) {
   state.tab = name;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
-  ["board", "submissions", "events", "questions", "codes", "export"].forEach((n) => {
+  ["board", "devices", "submissions", "events", "questions", "codes", "export"].forEach((n) => {
     $("panel-" + n).hidden = n !== name;
   });
   refresh();
@@ -196,6 +219,17 @@ $("btn-connect").onclick = () => {
   state.token = ($("token").value || "").trim();
   try { sessionStorage.setItem("ph_admin_token", state.token); } catch (e) {}
   refresh();
+};
+$("btn-paste").onclick = async () => {
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    if (!text) { $("conn").textContent = "剪贴板是空的"; $("conn").className = "bad"; return; }
+    $("token").value = text;
+    $("btn-connect").click();
+  } catch (e) {
+    $("conn").textContent = "浏览器不允许读剪贴板，请手动 Ctrl+V";
+    $("conn").className = "bad";
+  }
 };
 $("btn-refresh").onclick = () => refresh();
 $("btn-filter").onclick = () => loadSubs();

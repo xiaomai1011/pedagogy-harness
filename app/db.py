@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS submission_log (
     hint_unlocked_level INTEGER NOT NULL DEFAULT 0,
     hint_requested      INTEGER NOT NULL DEFAULT 0,
     pass_status         INTEGER NOT NULL DEFAULT 0,
-    elapsed_ms          INTEGER NOT NULL DEFAULT 0
+    elapsed_ms          INTEGER NOT NULL DEFAULT 0,
+    code                TEXT    NOT NULL DEFAULT ''
 );
 """
 
@@ -37,6 +38,8 @@ _COLUMN_MIGRATIONS = {
     "phase": "ALTER TABLE submission_log ADD COLUMN phase TEXT NOT NULL DEFAULT 'practice'",
     "hint_unlocked_level":
         "ALTER TABLE submission_log ADD COLUMN hint_unlocked_level INTEGER NOT NULL DEFAULT 0",
+    # 学生代码原文（截断保存，便于负责人复盘；旧库补空列，历史行不回填）
+    "code": "ALTER TABLE submission_log ADD COLUMN code TEXT NOT NULL DEFAULT ''",
 }
 
 # 契约 §4 错误记忆表（按 participant_id 跨会话累计）
@@ -250,13 +253,13 @@ def log_submission_conn(conn: sqlite3.Connection, **payload) -> int:
         """INSERT INTO submission_log
            (ts, participant_id, group_id, question_id, phase, submit_seq, status,
             error_type, error_class, error_kp, hint_level, hint_unlocked_level,
-            hint_requested, pass_status, elapsed_ms)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            hint_requested, pass_status, elapsed_ms, code)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (payload["ts"], payload["participant_id"], payload["group_id"], payload["question_id"],
          payload["phase"], payload["submit_seq"], payload["status"], payload["error_type"],
          payload["error_class"], payload["error_kp"], payload["hint_level"],
          payload["hint_unlocked_level"], payload["hint_requested"], payload["pass_status"],
-         payload["elapsed_ms"]),
+         payload["elapsed_ms"], payload.get("code", "")),
     )
     return int(cur.lastrowid)
 

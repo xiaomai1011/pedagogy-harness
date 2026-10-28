@@ -10,7 +10,7 @@ import time
 import weakref
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from app import access
 from app import admin
 from app import db
+from app import enroll
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
 from app.harness import registry
 from app.harness.config_switch import PRESETS
@@ -210,7 +211,18 @@ def _claims(x_access_code: str | None) -> access.Claims | None:
         })
 
 
-def _participant_of(body_participant_id: str, claims: access.Claims | None) -> str:
+def _participant_of(body_participant_id: str, claims: access.Claims | None,
+                    request: Request | None = None) -> str:
+    # 自动登记模式：以服务端下发的 Cookie 为准，请求体里的编号不能顶替别人
+    if request is not None and enroll.enabled():
+        enrolled = enroll.resolve(request)
+        if enrolled:
+            if (body_participant_id or "").strip() and body_participant_id.strip() != enrolled:
+                raise HTTPException(status_code=403, detail={
+                    "status": "identity_mismatch", "code": "enrollment_mismatch",
+                    "message": "这台电脑登记的是另一个被试编号，本次请求未执行。",
+                })
+            return enrolled
     try:
         return access.resolve_participant(body_participant_id, claims)
     except access.AccessError as exc:
@@ -328,13 +340,30 @@ def _isolation_refusal(exc, *, hint_requested: bool) -> dict:
     }
 
 
+@app.post("/api/enroll")
+def api_enroll(request: Request, response: Response) -> dict:
+    """新电脑自动登记：服务端分配编号并下发 HttpOnly Cookie。
+
+    只在 `PH_AUTO_ENROLL=1` 且未启用访问码强制时可用——用访问码的批次，身份由码决定。
+    """
+    if not enroll.enabled():
+        raise HTTPException(status_code=404, detail={"status": "enroll_disabled",
+                                                     "message": "本服务未开启自动登记"})
+    if access.access_required():
+        raise HTTPException(status_code=409, detail={
+            "status": "access_code_mode",
+            "message": "本批次使用访问码固定身份，不需要也不允许自动分配编号。",
+        })
+    return enroll.enroll(request, response)
+
+
 @app.post("/api/submit")
-def api_submit(req: SubmitRequest,
+def api_submit(req: SubmitRequest, request: Request = None,
                x_access_code: str | None = Header(default=None, alias=access.HEADER_NAME)) -> dict:
     from app.harness import isolation
 
     claims = _claims(x_access_code)
-    participant_id = _participant_of(req.participant_id, claims)
+    participant_id = _participant_of(req.participant_id, claims, request)
     _require_phase_allowed(req.question_id, claims)
     _enter_single_lane()
     try:
@@ -352,7 +381,7 @@ def api_submit(req: SubmitRequest,
 
 
 @app.post("/api/hint")
-def api_hint(req: HintRequest,
+def api_hint(req: HintRequest, request: Request = None,
              x_access_code: str | None = Header(default=None, alias=access.HEADER_NAME)) -> dict:
     """学生**只想看提示、代码没改**：走同一套教学组件 + 防泄校验，但**不写日志**。
 
@@ -363,7 +392,7 @@ def api_hint(req: HintRequest,
     from app.harness import isolation
 
     claims = _claims(x_access_code)
-    participant_id = _participant_of(req.participant_id, claims)
+    participant_id = _participant_of(req.participant_id, claims, request)
     _require_phase_allowed(req.question_id, claims)
     _enter_single_lane()
     try:

@@ -723,6 +723,21 @@
     const code = ($("access").value || "").trim();
     return code ? { "X-Access-Code": code } : {};
   }
+
+  // 自动登记模式：新电脑第一次打开时由服务端分配编号（Cookie 记住），编号框改为只读。
+  async function ensureEnrollment() {
+    try {
+      const resp = await fetch("/api/enroll", { method: "POST" });
+      if (!resp.ok) return;                    // 未开启 / 用访问码的批次：保持手动填写
+      const d = await resp.json();
+      if (!d.participant_id) return;
+      $("pid").value = d.participant_id;
+      $("pid").readOnly = true;
+      $("pid").title = "本机编号由服务端自动分配，不需要手改";
+      $("st-pid").textContent = d.participant_id + "（本机自动分配）";
+      try { sessionStorage.setItem("ph_pid", d.participant_id); } catch (e) { /* 忽略 */ }
+    } catch (e) { /* 忽略：退回手动模式 */ }
+  }
   function accessErrorText(d) {
     const s = (d && d.detail && d.detail.status) || "";
     if (s === "access_denied") return "访问码无效或已过期，请联系负责人重新领取。";
@@ -743,6 +758,7 @@
   initSplitter();
   loadStatus();
   loadComponents();
+  ensureEnrollment();
   loadQuestionList();
 </script>
 </body>

@@ -164,7 +164,7 @@ def submissions(participant_id: str = "", question_id: str = "", limit: int = 20
     params.append(max(1, min(int(limit), 1000)))
     return _rows(
         "SELECT id, ts, participant_id, question_id, phase, submit_seq, status, error_type, "
-        "error_class, error_kp, hint_level, hint_requested, pass_status, elapsed_ms "
+        "error_class, error_kp, hint_level, hint_requested, pass_status, elapsed_ms, code "
         f"FROM submission_log {clause} ORDER BY id DESC LIMIT ?",
         tuple(params),
     )
@@ -211,7 +211,7 @@ def questions_overview() -> list[dict]:
 
 SUBMISSION_CSV_FIELDS = ["id", "ts", "participant_id", "question_id", "phase", "submit_seq", "status",
                          "error_type", "error_class", "error_kp", "hint_level", "hint_requested",
-                         "pass_status", "elapsed_ms"]
+                         "pass_status", "elapsed_ms", "code"]
 EVENT_CSV_FIELDS = ["event_id", "event_type", "request_id", "participant_id", "question_id", "phase",
                     "entry", "ts_start", "elapsed_ms", "model_ms", "status", "progress", "hint_level",
                     "hint_source", "judge_status", "reason_code"]
@@ -307,6 +307,14 @@ def api_access_code(req: CodeRequest, request: Request,
     return {"participant_id": req.participant_id, "batch": batch, "phases": list(phases),
             "hours": hours, "code": code,
             "note": "无状态签名码不能即时撤销；阶段结束或应急时轮换密钥使旧码统一失效。"}
+
+
+@router.get("/enrollments")
+def api_enrollments(request: Request, x_admin_token: str = Header(default=None)) -> list[dict]:
+    """自动登记过的电脑与被分配的编号（只在 PH_AUTO_ENROLL=1 时有意义）。"""
+    require_admin(request, x_admin_token)
+    from app import enroll
+    return enroll.list_enrollments()
 
 
 @router.get("/export/{what}.csv")

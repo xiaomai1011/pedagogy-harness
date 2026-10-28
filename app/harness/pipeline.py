@@ -411,6 +411,8 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
             "hint_requested": 1 if request_hint else 0,
             "pass_status": 1 if result.status == "pass" else 0,
             "elapsed_ms": result.exec_ms,
+            # 学生代码原文（截断保存）：负责人复盘/复核分类时要用；不参与判题
+            "code": (code or "")[:20000],
         }
         with db.connect() as conn:
             submission_id = db.log_submission_conn(conn, **payload)
