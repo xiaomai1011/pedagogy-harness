@@ -1,17 +1,16 @@
-"""新电脑自动登记：服务端分配固定被试编号，并把这台机器绑定到该编号。
+"""匿名会话登记：服务端给每台浏览器分配一个编号，只用来关联这台浏览器的使用记录。
 
 设计边界（写清楚，避免误解）：
 
 - 只在 `PH_AUTO_ENROLL=1` 且**没有启用访问码强制**（`PH_REQUIRE_ACCESS_CODE` 未开）时工作。
   用访问码的批次，身份由访问码决定，这里不参与。
-- 编号按批次顺序分配（`A001`、`A002`…）。绑定优先级：
-  1. 浏览器 Cookie（`ph_subject`，HttpOnly，随机令牌，库里只存 SHA-256）；
-  2. Cookie 丢失时按**客户端 IP**（同一批次、同一来源地址）找回原编号。
-  这样机房电脑清 Cookie、换浏览器、浏览器禁 Cookie 时，同一台机器仍然拿回同一个编号，
-  不会每次访问都新增一个 `A00x`。
-- 这是"按设备"的登记，不是"按人"的识别：一台电脑多人轮流用会共用同一个编号；
-  若多台机器经同一出口地址（NAT）访问，会被并成同一个编号——出现这种情况需在管理台换用访问码模式。
-- 编号与 Cookie 令牌都不含个人信息；`client_ip` 只用于本地绑定与运维核对，不出现在学生端。
+- 编号按批次顺序分配（`A001`、`A002`…），只认浏览器 Cookie（`ph_subject`，HttpOnly，
+  随机令牌，库里只存 SHA-256）。**不按来源地址找回、不按来源地址合并**：多人共用校园网
+  出口时不会串号；代价是换浏览器、清 Cookie、重装系统后会拿到新编号（这是可接受的，
+  不承诺跨浏览器识别同一个人）。
+- 编号是**匿名会话**，不是真人身份：会话数不等于参与人数；一台电脑多人轮流用会共用同一个编号。
+- `client_ip` 只记录用于本地排障（如某个会话请求异常），**不参与身份判定**，
+  也不出现在学生端。
 """
 
 from __future__ import annotations
@@ -96,17 +95,6 @@ def _by_token(conn: sqlite3.Connection, token: str, batch: str):
     return None
 
 
-def _by_ip(conn: sqlite3.Connection, batch: str, ip: str):
-    if not ip:
-        return None
-    return conn.execute(
-        "SELECT participant_id, batch FROM enrollment "
-        "WHERE batch = ? AND client_ip = ? AND client_ip != '' "
-        "ORDER BY created_ts LIMIT 1",
-        (batch, ip),
-    ).fetchone()
-
-
 def _touch(conn: sqlite3.Connection, participant_id: str) -> None:
     conn.execute("UPDATE enrollment SET last_seen_ts = ? WHERE participant_id = ?",
                  (_now(), participant_id))
@@ -114,14 +102,11 @@ def _touch(conn: sqlite3.Connection, participant_id: str) -> None:
 
 
 def resolve(request: Request) -> str | None:
-    """返回这台机器已登记的编号：先认 Cookie，再按来源地址找回；都不符返回 None。"""
+    """返回这台浏览器的会话编号：只认 Cookie，没有就返回 None（不回退来源地址）。"""
     batch = _batch()
-    ip = _client_ip(request)
     conn = _connect()
     try:
         row = _by_token(conn, request.cookies.get(COOKIE_NAME, ""), batch)
-        if row is None:
-            row = _by_ip(conn, batch, ip)
         if row is None:
             return None
         _touch(conn, row["participant_id"])
@@ -131,16 +116,12 @@ def resolve(request: Request) -> str | None:
 
 
 def enroll(request: Request, response: Response) -> dict:
-    """登记这台机器：Cookie 有效则沿用；否则按来源地址找回；都没有才分配新编号。"""
+    """登记这台浏览器：Cookie 有效则沿用，否则分配一个新编号（不按来源地址合并）。"""
     batch = _batch()
     ip = _client_ip(request)
     conn = _connect()
     try:
         row = _by_token(conn, request.cookies.get(COOKIE_NAME, ""), batch)
-        bound_by = "cookie"
-        if row is None:
-            row = _by_ip(conn, batch, ip)
-            bound_by = "ip"
         if row is not None:
             token = secrets.token_hex(32)
             conn.execute(
@@ -150,7 +131,7 @@ def enroll(request: Request, response: Response) -> dict:
             conn.commit()
             _set_cookie(response, token)
             return {"participant_id": row["participant_id"], "created": False,
-                    "batch": batch, "bound_by": bound_by}
+                    "batch": batch, "bound_by": "cookie"}
 
         participant_id = _next_id(conn, batch)
         token = secrets.token_hex(32)

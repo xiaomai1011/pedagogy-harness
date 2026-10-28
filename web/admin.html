@@ -72,7 +72,7 @@
 
   <section id="panel-devices" hidden>
     <div class="row">
-      <span class="muted">自动登记模式（PH_AUTO_ENROLL=1）下，学生第一次打开页面时由服务端分配编号并绑定这台机器：先认 Cookie，Cookie 丢失时按来源地址找回，同一台机器不会重复拿号。</span>
+      <span class="muted">自动登记模式（PH_AUTO_ENROLL=1）下，学生第一次打开页面时由服务端分配编号并绑定这台机器：先认 Cookie，Cookie 丢失时不按来源地址找回、也不合并，换浏览器或清 Cookie 会得到新编号；会话数不等于人数。</span>
       <button id="btn-roster" class="ghost">复制登记表</button>
     </div>
     <div class="wrap"><table id="t-dev"><thead></thead><tbody></tbody></table></div>

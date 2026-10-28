@@ -85,6 +85,8 @@ def analyze_participant(pid: str, subs: list[dict], hints: list[dict], plan, rul
 
     out: dict = {"participant_id": pid, "submissions": len(mine),
                  "questions_attempted": len(by_q), "repeated_submissions": max(0, len(mine) - len(by_q))}
+    out["questions_passed"] = len([q for q, rows in by_q.items()
+                                   if any(as_int(r.get("pass_status")) == 1 for r in rows)])
 
     for phase in PHASES:
         expected = [q for q in plan.get(phase, [])]
@@ -146,6 +148,9 @@ def analyze_participant(pid: str, subs: list[dict], hints: list[dict], plan, rul
     out["gap_count"] = len(gaps)
     out["gap_median_s"] = round(statistics.median(gaps), 1) if gaps else ""
     out["gap_mean_s"] = round(statistics.mean(gaps), 1) if gaps else ""
+    stamps = sorted(s for s in (r.get("ts") or "" for r in mine) if s)
+    out["first_ts"] = stamps[0] if stamps else ""
+    out["last_ts"] = stamps[-1] if stamps else ""
     return out
 
 
@@ -157,6 +162,8 @@ def main(argv=None) -> int:
     parser.add_argument("--roster", default=None, help="可选：电脑编号 CSV（含 participant_id 列）")
     parser.add_argument("--rule", choices=("any", "first"), default="any",
                         help="计分规则：any=至少通过一次；first=首次提交即通过（默认 any）")
+    parser.add_argument("--mode", choices=("flow", "free"), default="flow",
+                        help="flow=前测-练习-后测流程口径；free=自由体验（不计算前后测与变化，默认 flow）")
     args = parser.parse_args(argv)
 
     export_dir = Path(args.export)
@@ -171,15 +178,21 @@ def main(argv=None) -> int:
 
     rows = [analyze_participant(pid, subs, hints, plan, args.rule) for pid in participants]
 
-    columns = ["participant_id", "submissions", "questions_attempted", "repeated_submissions"]
-    for phase in PHASES:
-        columns += [f"{phase}_expected", f"{phase}_attempted", f"{phase}_passed_any",
-                    f"{phase}_passed_first", f"{phase}_score"]
-    columns += ["pretest_to_posttest_delta", "hint_requests", "hint_events", "hint_level_max",
-                "hint_sources", "model_ms_total", "model_ms_avg", "error_types",
-                "judge_ms_total", "judge_error_count", "pending_hints", "gap_count",
-                "gap_median_s", "gap_mean_s", "pretest_missing", "pretest_unfinished",
-                "practice_missing", "practice_unfinished", "posttest_missing", "posttest_unfinished"]
+    if args.mode == "free":
+        columns = ["participant_id", "questions_attempted", "questions_passed", "submissions",
+                   "repeated_submissions", "hint_requests", "hint_level_max", "hint_sources",
+                   "error_types", "model_ms_total", "judge_ms_total", "judge_error_count",
+                   "pending_hints", "first_ts", "last_ts"]
+    else:
+        columns = ["participant_id", "submissions", "questions_attempted", "repeated_submissions"]
+        for phase in PHASES:
+            columns += [f"{phase}_expected", f"{phase}_attempted", f"{phase}_passed_any",
+                        f"{phase}_passed_first", f"{phase}_score"]
+        columns += ["pretest_to_posttest_delta", "hint_requests", "hint_events", "hint_level_max",
+                    "hint_sources", "model_ms_total", "model_ms_avg", "error_types",
+                    "judge_ms_total", "judge_error_count", "pending_hints", "gap_count",
+                    "gap_median_s", "gap_mean_s", "pretest_missing", "pretest_unfinished",
+                    "practice_missing", "practice_unfinished", "posttest_missing", "posttest_unfinished"]
 
     def cell(value):
         if isinstance(value, list):
@@ -193,38 +206,61 @@ def main(argv=None) -> int:
         for row in rows:
             writer.writerow({k: cell(row.get(k, "")) for k in columns})
 
-    lines = ["# 小规模试用逐人结果（描述性，不做显著性检验）", ""]
-    lines.append(f"- 计分规则：**{'首次提交即通过' if args.rule == 'first' else '至少通过一次'}**，按题目计分（不是按提交次数）。")
-    lines.append(f"- 题单：前测 {len(plan['pretest'])} 题 / 练习 {len(plan['practice'])} 题 / 后测 {len(plan['posttest'])} 题。")
-    lines.append("- 百分比一律写成“分子/分母”；缺失题目与未完成题目在最后一节逐人列出。")
-    lines.append("")
-    lines.append("| 参与者 | 前测得分 | 练习通过 | 后测得分 | 前后变化 | 提交 | 提示 | 提示等级上限 | 判题耗时(ms) | 模型耗时(ms) |")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|")
-    for row in rows:
-        lines.append(
-            f"| {row['participant_id']} | {row['pretest_score']}/{row['pretest_expected']} "
-            f"| {row['practice_passed_any']}/{row['practice_expected']} "
-            f"| {row['posttest_score']}/{row['posttest_expected']} "
-            f"| {row['pretest_to_posttest_delta']:+d} | {row['submissions']} | {row['hint_requests']} "
-            f"| L{row['hint_level_max']} | {row['judge_ms_total']} | {row['model_ms_total']} |"
-        )
-    lines.append("")
-    lines.append("## 缺失与未完成")
-    for row in rows:
-        missing = [f"{PHASE_LABEL[p]} {q}" for p in PHASES for q in row.get(f"{p}_missing", [])]
-        unfinished = [f"{PHASE_LABEL[p]} {q}" for p in PHASES for q in row.get(f"{p}_unfinished", [])]
-        lines.append(f"- **{row['participant_id']}**：未提交 {('、'.join(missing) or '无')}；提交未通过 {('、'.join(unfinished) or '无')}；"
-                     f"无后续提交的提示 {row['pending_hints']} 次；判题故障 {row['judge_error_count']} 次。")
-    lines.append("")
-    lines.append("## 口径提醒")
-    lines.append("- `judge_ms` 是判题执行耗时，`model_ms` 是模型调用耗时，二者都不是学生作答时间。")
-    lines.append("- `gap_median_s`/`gap_mean_s` 是“提示 → 下一次提交”的间隔，含阅读、修改与操作。")
-    lines.append("- 没有下一次提交的提示单列（`pending_hints`），不按失败处理，也不剔除。")
-    lines.append("- 小样本只报告逐人结果与简单汇总；如需比较，先确认评分规则与题目等价性，不在本工具里做检验。")
+    if args.mode == "free":
+        lines = ["# 自由体验使用记录（描述性）", ""]
+        lines.append("- 按**匿名会话**汇总：**会话数不等于参与人数**（换浏览器、清 Cookie、重装会生成新会话）。")
+        lines.append("- 不要求统一题量或顺序；没出现的题目只是没做，**不记为缺考或失败**。")
+        lines.append("- 本表**不计算前后测得分或变化**，也不做显著性检验。")
+        lines.append("- `judge_ms` 是判题执行耗时、`model_ms` 是模型调用耗时，二者都不是作答时间。")
+        lines.append("")
+        lines.append("| 会话编号 | 尝试题目 | 通过题目 | 提交 | 提示次数 | 最高等级 | 判题耗时(ms) | 模型耗时(ms) | 判题故障 | 首次提交 | 最近提交 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+        for row in rows:
+            lines.append(
+                f"| {row['participant_id']} | {row['questions_attempted']} | {row['questions_passed']} "
+                f"| {row['submissions']} | {row['hint_requests']} | L{row['hint_level_max']} "
+                f"| {row['judge_ms_total']} | {row['model_ms_total']} | {row['judge_error_count']} "
+                f"| {row['first_ts'] or '—'} | {row['last_ts'] or '—'} |"
+            )
+        lines.append("")
+        lines.append("## 汇总")
+        lines.append(f"- 会话数：**{len(rows)}**（不等于人数）。")
+        lines.append(f"- 有提交的会话：{len([r for r in rows if r['submissions'] > 0])}；提交合计 {sum(r['submissions'] for r in rows)} 次。")
+        lines.append(f"- 使用过提示的会话：{len([r for r in rows if r['hint_requests'] > 0])}；提示请求合计 {sum(r['hint_requests'] for r in rows)} 次。")
+        lines.append(f"- 判题故障：{sum(r['judge_error_count'] for r in rows)} 次。")
+    else:
+        lines = ["# 小规模试用逐人结果（描述性，不做显著性检验）", ""]
+        lines.append(f"- 计分规则：**{'首次提交即通过' if args.rule == 'first' else '至少通过一次'}**，按题目计分（不是按提交次数）。")
+        lines.append(f"- 题单：前测 {len(plan['pretest'])} 题 / 练习 {len(plan['practice'])} 题 / 后测 {len(plan['posttest'])} 题。")
+        lines.append("- 百分比一律写成“分子/分母”；缺失题目与未完成题目在最后一节逐人列出。")
+        lines.append("")
+        lines.append("| 参与者 | 前测得分 | 练习通过 | 后测得分 | 前后变化 | 提交 | 提示 | 提示等级上限 | 判题耗时(ms) | 模型耗时(ms) |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        for row in rows:
+            lines.append(
+                f"| {row['participant_id']} | {row['pretest_score']}/{row['pretest_expected']} "
+                f"| {row['practice_passed_any']}/{row['practice_expected']} "
+                f"| {row['posttest_score']}/{row['posttest_expected']} "
+                f"| {row['pretest_to_posttest_delta']:+d} | {row['submissions']} | {row['hint_requests']} "
+                f"| L{row['hint_level_max']} | {row['judge_ms_total']} | {row['model_ms_total']} |"
+            )
+        lines.append("")
+        lines.append("## 缺失与未完成")
+        for row in rows:
+            missing = [f"{PHASE_LABEL[p]} {q}" for p in PHASES for q in row.get(f"{p}_missing", [])]
+            unfinished = [f"{PHASE_LABEL[p]} {q}" for p in PHASES for q in row.get(f"{p}_unfinished", [])]
+            lines.append(f"- **{row['participant_id']}**：未提交 {('、'.join(missing) or '无')}；提交未通过 {('、'.join(unfinished) or '无')}；"
+                         f"无后续提交的提示 {row['pending_hints']} 次；判题故障 {row['judge_error_count']} 次。")
+        lines.append("")
+        lines.append("## 口径提醒")
+        lines.append("- `judge_ms` 是判题执行耗时，`model_ms` 是模型调用耗时，二者都不是学生作答时间。")
+        lines.append("- `gap_median_s`/`gap_mean_s` 是“提示 → 下一次提交”的间隔，含阅读、修改与操作。")
+        lines.append("- 没有下一次提交的提示单列（`pending_hints`），不按失败处理，也不剔除。")
+        lines.append("- 小样本只报告逐人结果与简单汇总；如需比较，先确认评分规则与题目等价性，不在本工具里做检验。")
     (export_dir / "trial_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    print(f"✅ 写出 {out_csv}（{len(rows)} 人）与 trial_summary.md")
-    print(f"   题单：前测 {len(plan['pretest'])} / 练习 {len(plan['practice'])} / 后测 {len(plan['posttest'])}；计分规则 {args.rule}")
+    print(f"✅ 写出 {out_csv}（{len(rows)} 个会话）与 trial_summary.md")
+    print(f"   模式：{'自由体验（描述性，不算前后测）' if args.mode == 'free' else '流程（前测/练习/后测）'}；计分规则 {args.rule}")
     return 0
 
 

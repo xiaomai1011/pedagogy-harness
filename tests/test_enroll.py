@@ -45,8 +45,8 @@ def test_enroll_assigns_stable_id_per_browser(client):
     assert other.post("/api/enroll").json()["participant_id"] != pid
 
 
-def test_enroll_reuses_id_for_same_machine_without_cookie(client):
-    """机房清 Cookie/禁用 Cookie：同一台机器仍应拿回原编号，而不是新增 A00x。"""
+def test_enroll_gives_new_id_when_cookie_missing_even_same_ip(client):
+    """不按来源地址合并：同一出口地址、但没有 Cookie，也要分配新会话编号。"""
     first = TestClient(main.app, client=("10.1.2.3", 50001)).post("/api/enroll")
     pid = first.json()["participant_id"]
 
@@ -54,24 +54,21 @@ def test_enroll_reuses_id_for_same_machine_without_cookie(client):
     before = _count()
     again = fresh.post("/api/enroll")
     assert again.status_code == 200
-    assert again.json()["participant_id"] == pid
-    assert again.json()["created"] is False
-    assert again.json()["bound_by"] == "ip"
-    assert _count() == before                                # 没有新增 A00x
+    assert again.json()["participant_id"] != pid
+    assert again.json()["created"] is True
+    assert again.json()["bound_by"] == "new"
+    assert _count() == before + 1                             # 新增了一个匿名会话
 
 
-def test_resolve_binds_submission_by_ip_when_cookie_missing(client):
-    enrolled = TestClient(main.app, client=("10.1.2.3", 50003))
-    pid = enrolled.post("/api/enroll").json()["participant_id"]
-    fresh = TestClient(main.app, client=("10.1.2.3", 50004))   # 没有 Cookie，只靠来源地址
+def test_submission_without_session_is_rejected(client):
+    """没有会话 Cookie 时不得凭请求体里的编号提交，也不能启动判题。"""
+    TestClient(main.app, client=("10.1.2.3", 50003)).post("/api/enroll")
+    fresh = TestClient(main.app, client=("10.1.2.3", 50004))   # 没有 Cookie
+    before = _count()
     resp = fresh.post("/api/submit", json={"question_id": "P001", "code": "print(1)"})
-    assert resp.status_code == 200
-    conn = db.connect()
-    try:
-        row = conn.execute("SELECT participant_id FROM submission_log ORDER BY id DESC LIMIT 1").fetchone()
-    finally:
-        conn.close()
-    assert row["participant_id"] == pid
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["status"] == "session_required"
+    assert _count() == before
 
 
 def test_enroll_rejected_when_access_code_required(tmp_path, monkeypatch):

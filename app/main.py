@@ -227,13 +227,17 @@ def _participant_of(body_participant_id: str, claims: access.Claims | None,
     # 自动登记模式：以服务端下发的 Cookie 为准，请求体里的编号不能顶替别人
     if request is not None and enroll.enabled():
         enrolled = enroll.resolve(request)
-        if enrolled:
-            if (body_participant_id or "").strip() and body_participant_id.strip() != enrolled:
-                raise HTTPException(status_code=403, detail={
-                    "status": "identity_mismatch", "code": "enrollment_mismatch",
-                    "message": "这台电脑登记的是另一个被试编号，本次请求未执行。",
-                })
-            return enrolled
+        if not enrolled:
+            raise HTTPException(status_code=403, detail={
+                "status": "session_required", "code": "session_missing",
+                "message": "页面会话尚未建立，请刷新页面后重试（本次请求未执行）。",
+            })
+        if (body_participant_id or "").strip() and body_participant_id.strip() != enrolled:
+            raise HTTPException(status_code=403, detail={
+                "status": "identity_mismatch", "code": "enrollment_mismatch",
+                "message": "这台电脑登记的是另一个被试编号，本次请求未执行。",
+            })
+        return enrolled
     try:
         return access.resolve_participant(body_participant_id, claims)
     except access.AccessError as exc:
