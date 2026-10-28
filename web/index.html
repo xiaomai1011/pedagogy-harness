@@ -60,6 +60,12 @@
     .sidebar h2.q-title { font-size: 19px; margin: 12px 0 4px; line-height: 1.5; }
     .sidebar .q-meta { color: var(--fg-dim); font-size: 13px; margin-bottom: 12px; }
     .sidebar .q-stmt { line-height: 1.9; font-size: 15px; white-space: pre-wrap; margin: 8px 0 16px; }
+    /* 题目列表可收起：默认限高滚动，收起后整栏高度都留给题目说明 */
+    .sb-head { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; }
+    .sb-head h3.sec { margin: 0; }
+    .sb-head .btn { padding: 1px 10px; font-size: 12px; line-height: 1.7; }
+    #qlist { max-height: 32vh; overflow: auto; padding-right: 4px; }
+    .sidebar.collapsed #qlist { display: none; }
     .io-req { background: var(--bg-panel); border: 1px solid var(--line-soft);
       border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; line-height: 1.9; font-size: 14px; }
     .io-req .k { color: var(--judge); font-weight: 600; }
@@ -170,7 +176,13 @@
 
   <!-- 题目栏 -->
   <aside class="sidebar">
-    <h3 class="sec">题目列表</h3>
+    <div class="sb-head">
+      <h3 class="sec">题目列表</h3>
+      <span class="muted" id="qcount" style="font-size:12px"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="btn-toggle-list" aria-expanded="true"
+        title="收起后整栏高度都留给题目说明，点「展开列表」可还原">收起列表</button>
+    </div>
     <div id="qlist" class="muted">加载中…</div>
     <div id="qdetail"></div>
   </aside>
@@ -399,6 +411,7 @@
   // ---------- 题目 ----------
   async function loadQuestionList() {
     const list = await (await fetch("/api/questions")).json();
+    $("qcount").textContent = list.length ? list.length + " 题" : "";
     if (!list.length) {
       $("qlist").innerHTML =
         '<span class="muted">题库未就绪（岗位 4-A 交付后自动出现在这里）</span>' +
@@ -414,6 +427,21 @@
     document.querySelectorAll(".q-item").forEach((el) => { el.onclick = () => selectQuestion(el.dataset.id); });
     selectQuestion(list[0].id);
   }
+
+  // 题目列表收起/展开：状态记在 localStorage，刷新后保持
+  function applyListCollapsed(collapsed) {
+    document.querySelector(".sidebar").classList.toggle("collapsed", collapsed);
+    const btn = $("btn-toggle-list");
+    btn.textContent = collapsed ? "展开列表" : "收起列表";
+    btn.setAttribute("aria-expanded", String(!collapsed));
+    try { localStorage.setItem("ph_qlist_collapsed", collapsed ? "1" : "0"); } catch (e) { /* 隐私模式下忽略 */ }
+  }
+  $("btn-toggle-list").onclick = () => {
+    const collapsed = document.querySelector(".sidebar").classList.contains("collapsed");
+    applyListCollapsed(!collapsed);
+  };
+  try { applyListCollapsed(localStorage.getItem("ph_qlist_collapsed") === "1"); }
+  catch (e) { applyListCollapsed(false); }
 
   // 被试编号也放进 sessionStorage：刷新后不会退回默认 S01，避免与访问码里的身份对不上。
   try {
