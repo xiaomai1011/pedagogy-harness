@@ -25,7 +25,8 @@
     /* ---------- 布局：标题栏 / 横幅 / (活动栏·题目栏·工作区) / 状态栏 ---------- */
     .app {
       height: 100vh; min-height: 480px; display: grid;
-      grid-template-columns: 44px 400px minmax(0, 1fr);
+      /* 左栏默认 560px：题干/输入说明较长时才不用反复折行；可用中间竖条拖动，宽度记在 localStorage */
+      grid-template-columns: 44px var(--side-w, 560px) minmax(0, 1fr);
       grid-template-rows: 46px auto minmax(0, 1fr) 26px;
       grid-template-areas:
         "titlebar titlebar titlebar"
@@ -64,8 +65,20 @@
     .sb-head { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; }
     .sb-head h3.sec { margin: 0; }
     .sb-head .btn { padding: 1px 10px; font-size: 12px; line-height: 1.7; }
-    #qlist { max-height: 32vh; overflow: auto; padding-right: 4px; }
+    #qlist { max-height: min(240px, 30vh); overflow: auto; padding-right: 4px; }
     .sidebar.collapsed #qlist { display: none; }
+    /* 收起后仍能看见当前题目，按钮变成「切换题目」 */
+    #q-current { display: none; font-size: 12px; max-width: 46%; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar.collapsed #q-current { display: inline; }
+    /* 窄屏（笔记本）按可用宽度收窄，别把工作区挤没 */
+    @media (max-width: 1500px) { .app { grid-template-columns: 44px var(--side-w, 500px) minmax(0, 1fr); } }
+    @media (max-width: 1180px) { .app { grid-template-columns: 44px var(--side-w, 400px) minmax(0, 1fr); } }
+
+    /* 左右分栏拖动条：贴在题目栏右边界上 */
+    .work { position: relative; }
+    .vsplit { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; }
+    .vsplit:hover, .vsplit.dragging { background: var(--accent); opacity: .55; }
     .io-req { background: var(--bg-panel); border: 1px solid var(--line-soft);
       border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; line-height: 1.9; font-size: 14px; }
     .io-req .k { color: var(--judge); font-weight: 600; }
@@ -79,8 +92,13 @@
 
     /* ---------- 工作区：编辑器 ─ 拖动条 ─ 操作条 ─ 结果双区 ---------- */
     .work { grid-area: work; display: flex; flex-direction: column; min-height: 0; }
-    .edit-pane { flex: 0 0 var(--edit-h, 46%); min-height: 88px; position: relative;
+    .edit-pane { flex: 0 0 var(--edit-h, 65%); min-height: 88px; position: relative;
       border-bottom: 1px solid var(--line); }
+    /* 编辑器左上角的用途标识：空白时也能一眼看出这里是写代码的地方 */
+    .edit-tag { position: absolute; right: 10px; top: 6px; z-index: 4; pointer-events: none;
+      font-size: 12px; letter-spacing: .3px; color: var(--fg-weak);
+      background: rgba(30, 30, 30, .72); border: 1px solid var(--line-soft);
+      border-radius: 10px; padding: 1px 9px; }
     #editor { position: absolute; inset: 0; }
     #code-ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none;
       background: #1e1e1e; color: #d4d4d4; border: 0; padding: 14px;
@@ -162,7 +180,8 @@
     <h1>教学法 Harness 练习助手</h1>
     <label class="muted">被试编号 <input class="pid" id="pid" value="S01" /></label>
     <label class="muted">实验访问码 <input class="pid" id="access" placeholder="负责人发放（可留空）" /></label>
-    <span class="notice idle" id="op-state">就绪</span>
+    <span class="notice idle" id="op-state">服务就绪</span>
+    <span class="notice idle" id="id-state" title="这里只反映身份校验状态：未验证＝尚未用访问码提交过任何请求">身份：未验证</span>
     <span class="spacer"></span>
     <!-- 组件徽标属**开发调试信息**：学生模式下默认收起，见「调试」开关 -->
     <div class="badges" id="badges"></div>
@@ -178,6 +197,7 @@
   <aside class="sidebar">
     <div class="sb-head">
       <h3 class="sec">题目列表</h3>
+      <span class="muted" id="q-current" title="收起状态下显示当前题目"></span>
       <span class="muted" id="qcount" style="font-size:12px"></span>
       <span class="spacer"></span>
       <button class="btn" id="btn-toggle-list" aria-expanded="true"
@@ -189,7 +209,8 @@
 
   <!-- 工作区 -->
   <main class="work" id="work">
-    <div class="edit-pane"><div id="editor"></div></div>
+    <div class="vsplit" id="vsplit" title="左右拖动调整题目栏宽度（双击恢复默认）"></div>
+    <div class="edit-pane"><div class="edit-tag">Python 代码</div><div id="editor"></div></div>
     <div class="splitter" id="splitter" title="向上拖动可放大下方反馈区；向下拖动可放大代码区"></div>
 
     <div class="actionbar">
@@ -322,10 +343,53 @@
     sp.addEventListener("pointercancel", stop);
   }
 
+  // 左右分栏：拖动题目栏右边界改宽度，双击恢复 560px；宽度记在 localStorage
+  function setSideWidth(px, remember) {
+    const w = Math.max(320, Math.min(860, Math.round(px)));
+    document.documentElement.style.setProperty("--side-w", w + "px");
+    if (remember) { try { localStorage.setItem("ph_side_w", String(w)); } catch (e) { /* 忽略 */ } }
+  }
+  function initSideDrag() {
+    const vs = $("vsplit");
+    if (!vs) return;
+    try {
+      const saved = parseInt(localStorage.getItem("ph_side_w") || "", 10);
+      if (saved) setSideWidth(saved, false);
+    } catch (e) { /* 忽略 */ }
+    let dragging = false;
+    vs.addEventListener("pointerdown", (e) => {
+      dragging = true; vs.classList.add("dragging");
+      try { vs.setPointerCapture(e.pointerId); } catch (_) {}
+      document.body.style.userSelect = "none"; e.preventDefault();
+    });
+    vs.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      setSideWidth(e.clientX - 44, false);      // 44px 是左侧活动栏
+    });
+    const stop = (e) => {
+      if (!dragging) return;
+      dragging = false; vs.classList.remove("dragging");
+      document.body.style.userSelect = "";
+      try {
+        const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side-w"));
+        if (w) setSideWidth(w, true);
+      } catch (_) {}
+      if (e && e.pointerId !== undefined) { try { vs.releasePointerCapture(e.pointerId); } catch (_) {} }
+    };
+    vs.addEventListener("pointerup", stop);
+    vs.addEventListener("pointercancel", stop);
+    vs.addEventListener("dblclick", () => setSideWidth(560, true));
+  }
+
   // ---------- 操作状态 / 按钮 ----------
   function notify(kind, text, target) {
     const el = $(target || "op-state");
     el.className = "notice " + kind; el.textContent = text;
+  }
+  // 身份状态单独一颗徽标：不要用「服务就绪」推断"已通过访问校验"
+  function setIdentity(kind, text) {
+    const el = $("id-state");
+    if (el) { el.className = "notice " + kind; el.textContent = text; }
   }
   function phaseAllowsTeaching() { return !!state.question && state.question.phase === "practice"; }
   function refreshButtons() {
@@ -440,8 +504,14 @@
   function applyListCollapsed(collapsed) {
     document.querySelector(".sidebar").classList.toggle("collapsed", collapsed);
     const btn = $("btn-toggle-list");
-    btn.textContent = collapsed ? "展开列表" : "收起列表";
+    btn.textContent = collapsed ? "切换题目" : "收起列表";
     btn.setAttribute("aria-expanded", String(!collapsed));
+    const cur = $("q-current");
+    if (cur) {
+      const q = state.question;
+      cur.textContent = q ? `当前：${q.id} ${q.title}` : "";
+      cur.title = q ? `${q.id} ${q.title}` : "";
+    }
     try { localStorage.setItem("ph_qlist_collapsed", collapsed ? "1" : "0"); } catch (e) { /* 隐私模式下忽略 */ }
   }
   $("btn-toggle-list").onclick = () => {
@@ -515,6 +585,8 @@
     $("st-phase").textContent = "阶段 " + (PHASE_LABEL[q.phase] || q.phase || "未标注");
     refreshBanner(); refreshButtons();
     notify("idle", phaseAllowsTeaching() ? "可提交，也可请求提示" : "当前阶段不提供 AI 提示", "op-msg");
+    // 选定题目后自动收起目录：读题时把整栏高度留给题干；「切换题目」可随时展开
+    applyListCollapsed(true);
   }
 
   // ---------- 左栏：程序运行结果（**结构化渲染，不复述多次 fail**）----------
@@ -656,10 +728,12 @@
       }
       if (r.status === 403) {
         const d = await r.json().catch(() => ({}));
+        setIdentity("bad", "身份：未通过");
         notify("bad", accessErrorText(d), "op-msg");
         return;
       }
       const d = await r.json();
+      setIdentity("ok", "身份：已验证");
       renderAll(d);
       if (d.status === "judge_unavailable") {
         notify("bad", "提交未执行：判题环境未就绪", "op-msg");
@@ -701,10 +775,12 @@
       }
       const d = await r.json();
       if (r.status === 403) {
+        setIdentity("bad", "身份：未通过");
         notify("bad", accessErrorText(d), "op-msg");
         return;
       }
       if (!repeat) { state.hintRequested = true; state.lastHintRequestId = reqId; saveHintRid(reqId); }
+      setIdentity("ok", "身份：已验证");
       renderAll(d);
       notify(repeat ? "ok" : "ok", repeat ? "已重新显示上次提示（未升级）" : "提示已返回", "op-msg");
     } catch (e) {
@@ -735,6 +811,7 @@
       $("pid").readOnly = true;
       $("pid").title = "本机编号由服务端自动分配，不需要手改";
       $("st-pid").textContent = d.participant_id + "（本机自动分配）";
+      setIdentity("ok", "身份：已登记 " + d.participant_id);
       try { sessionStorage.setItem("ph_pid", d.participant_id); } catch (e) { /* 忽略 */ }
     } catch (e) { /* 忽略：退回手动模式 */ }
   }
@@ -756,6 +833,7 @@
   applyDebug();
   initEditor();
   initSplitter();
+  initSideDrag();
   loadStatus();
   loadComponents();
   ensureEnrollment();
