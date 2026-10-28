@@ -30,7 +30,7 @@ from app.questions import list_questions, load_question
 
 app = FastAPI(title="pedagogy-harness")
 app.include_router(admin.router)
-APP_VERSION = "0.5.1-ui"
+APP_VERSION = "0.5.2-enroll"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 VENDOR_DIR = WEB_DIR / "vendor"
 

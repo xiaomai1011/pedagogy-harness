@@ -16,6 +16,14 @@ def client(tmp_path, monkeypatch):
     return TestClient(main.app)
 
 
+def _count() -> int:
+    conn = db.connect()
+    try:
+        return conn.execute("SELECT COUNT(*) FROM enrollment").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def test_enroll_disabled_returns_404(tmp_path, monkeypatch):
     monkeypatch.delenv("PH_AUTO_ENROLL", raising=False)
     monkeypatch.setenv("PH_DB", str(tmp_path / "off.sqlite"))
@@ -33,8 +41,37 @@ def test_enroll_assigns_stable_id_per_browser(client):
     assert again.json()["participant_id"] == pid          # 同一浏览器沿用同一个编号
     assert again.json()["created"] is False
 
-    other = TestClient(main.app)                          # 另一台电脑（没有 Cookie）
+    other = TestClient(main.app, client=("10.9.9.9", 51000))   # 另一台电脑（不同地址、没有 Cookie）
     assert other.post("/api/enroll").json()["participant_id"] != pid
+
+
+def test_enroll_reuses_id_for_same_machine_without_cookie(client):
+    """机房清 Cookie/禁用 Cookie：同一台机器仍应拿回原编号，而不是新增 A00x。"""
+    first = TestClient(main.app, client=("10.1.2.3", 50001)).post("/api/enroll")
+    pid = first.json()["participant_id"]
+
+    fresh = TestClient(main.app, client=("10.1.2.3", 50002))   # 同地址、全新 Cookie 罐
+    before = _count()
+    again = fresh.post("/api/enroll")
+    assert again.status_code == 200
+    assert again.json()["participant_id"] == pid
+    assert again.json()["created"] is False
+    assert again.json()["bound_by"] == "ip"
+    assert _count() == before                                # 没有新增 A00x
+
+
+def test_resolve_binds_submission_by_ip_when_cookie_missing(client):
+    enrolled = TestClient(main.app, client=("10.1.2.3", 50003))
+    pid = enrolled.post("/api/enroll").json()["participant_id"]
+    fresh = TestClient(main.app, client=("10.1.2.3", 50004))   # 没有 Cookie，只靠来源地址
+    resp = fresh.post("/api/submit", json={"question_id": "P001", "code": "print(1)"})
+    assert resp.status_code == 200
+    conn = db.connect()
+    try:
+        row = conn.execute("SELECT participant_id FROM submission_log ORDER BY id DESC LIMIT 1").fetchone()
+    finally:
+        conn.close()
+    assert row["participant_id"] == pid
 
 
 def test_enroll_rejected_when_access_code_required(tmp_path, monkeypatch):
