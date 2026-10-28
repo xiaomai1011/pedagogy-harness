@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import access
+from app import admin
 from app import db
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
 from app.harness import registry
@@ -26,6 +27,7 @@ from app.harness.vm_agent_adapter import VmAgentAdapter, register_vm_agent_adapt
 from app.questions import list_questions, load_question
 
 app = FastAPI(title="pedagogy-harness")
+app.include_router(admin.router)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 VENDOR_DIR = WEB_DIR / "vendor"
 
@@ -243,6 +245,10 @@ def api_questions(x_access_code: str = Header(default=None)) -> list[dict]:
     items = list_questions()
     if claims is not None:
         items = [q for q in items if claims.allows_phase(q.get("phase", ""))]
+    # 负责人在管理台"发题"后，学生只看到已发布的题目；发布表从未用过时按阶段全可见（本地联调）。
+    published = admin.published_ids()
+    if published is not None:
+        items = [q for q in items if q["id"] in published]
     return [{"id": q["id"], "title": q["title"], "difficulty": q.get("difficulty"),
              "phase": q.get("phase")}
             for q in items]
@@ -252,6 +258,14 @@ def api_questions(x_access_code: str = Header(default=None)) -> list[dict]:
 def api_components() -> dict:
     """当前已注册的教学组件。演示"可插拔"用：注册表里有什么，就返回什么。"""
     return {"registered": registry.names()}
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page() -> str:
+    """负责人本机管理台页面（数据接口还需 X-Admin-Token；未配置令牌时 404）。"""
+    if not admin.enabled():
+        raise HTTPException(status_code=404, detail={"status": "admin_disabled"})
+    return (WEB_DIR / "admin.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/status")

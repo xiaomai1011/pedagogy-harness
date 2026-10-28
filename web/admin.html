@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>实验管理台（本机）</title>
+<style>
+  :root { --bg:#1e1e1e; --bg-soft:#252526; --bg-hard:#181818; --line:#3c3c3c;
+    --fg:#e6e6e6; --fg-dim:#9d9d9d; --accent:#0e639c; --ok:#4ec9b0; --warn:#d7ba7d; --bad:#f48771; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:-apple-system,"Microsoft YaHei","Segoe UI",sans-serif; font-size:14px; }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--bg-hard); border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .muted { color:var(--fg-dim); font-size:12px; }
+  .spacer { margin-left:auto; }
+  input, select, button { font:inherit; color:var(--fg); background:var(--bg-soft);
+    border:1px solid var(--line); border-radius:4px; padding:4px 8px; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  main { padding:14px 16px 40px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:14px; }
+  .card { background:var(--bg-soft); border:1px solid var(--line); border-radius:6px; padding:10px 12px; }
+  .card .k { color:var(--fg-dim); font-size:12px; }
+  .card .v { font-size:20px; margin-top:4px; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+  .tabs button.on { background:var(--accent); border-color:var(--accent); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--fg-dim); font-weight:600; position:sticky; top:0; background:var(--bg); }
+  .wrap { max-height:62vh; overflow:auto; border:1px solid var(--line); border-radius:6px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  .muted { color:var(--fg-dim); }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .qlist label { display:flex; gap:8px; align-items:center; padding:5px 0; border-bottom:1px solid var(--line); }
+  .code { font-family:Consolas,Menlo,monospace; background:var(--bg-hard); border:1px solid var(--line);
+    border-radius:4px; padding:8px; word-break:break-all; white-space:pre-wrap; }
+  .hint { color:var(--fg-dim); font-size:12px; line-height:1.7; }
+</style>
+</head>
+<body>
+<header>
+  <h1>实验管理台</h1>
+  <span class="muted">仅本机可用 · 只读监控 / 发题 / 发码 / 导出</span>
+  <span class="spacer"></span>
+  <input id="token" type="password" placeholder="管理令牌" style="width:200px" />
+  <button class="primary" id="btn-connect">连接</button>
+  <button id="btn-refresh">刷新</button>
+  <span id="conn" class="muted">未连接</span>
+</header>
+
+<main>
+  <div class="cards" id="cards"></div>
+
+  <div class="tabs" id="tabs">
+    <button data-tab="board" class="on">进度看板</button>
+    <button data-tab="submissions">提交记录</button>
+    <button data-tab="events">事件日志</button>
+    <button data-tab="questions">发题</button>
+    <button data-tab="codes">发访问码</button>
+    <button data-tab="export">导出</button>
+  </div>
+
+  <section id="panel-board">
+    <div class="row">
+      <span class="muted">参与者 × 题目：做题次数 / 通过次数 / 最高提示等级 / 最近活动</span>
+    </div>
+    <div class="wrap"><table id="t-board"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section id="panel-submissions" hidden>
+    <div class="row">
+      <input id="f-pid" placeholder="按参与者过滤（可空）" />
+      <input id="f-qid" placeholder="按题目过滤（可空）" />
+      <button id="btn-filter">查询</button>
+    </div>
+    <div class="wrap"><table id="t-sub"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section id="panel-events" hidden>
+    <div class="wrap"><table id="t-evt"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section id="panel-questions" hidden>
+    <div class="row">
+      <span class="muted">勾选并发布后，学生端只显示已发布的题目（同一访问码内再按阶段过滤）。</span>
+      <span class="spacer"></span>
+      <button id="btn-all">全选</button>
+      <button id="btn-none">全不选</button>
+      <button class="primary" id="btn-publish">发布选中</button>
+      <button id="btn-unpublish">下架选中</button>
+    </div>
+    <div class="qlist" id="qlist"></div>
+  </section>
+
+  <section id="panel-codes" hidden>
+    <div class="row">
+      <input id="c-pid" placeholder="参与者 ID（一人一个，固定）" />
+      <label><input type="checkbox" class="c-phase" value="pretest" /> 前测</label>
+      <label><input type="checkbox" class="c-phase" value="practice" checked /> 练习</label>
+      <label><input type="checkbox" class="c-phase" value="posttest" /> 后测</label>
+      <input id="c-hours" type="number" min="1" max="72" value="8" style="width:80px" /> 小时
+      <button class="primary" id="btn-code">生成访问码</button>
+    </div>
+    <div class="hint">无状态签名码不能即时撤销：某阶段结束或需要统一作废时，轮换密钥即可让旧码全部失效；不要为每人切阶段重启服务。</div>
+    <div class="code" id="code-out" hidden></div>
+  </section>
+
+  <section id="panel-export" hidden>
+    <div class="row">
+      <button id="exp-sub">导出提交记录 CSV</button>
+      <button id="exp-evt">导出事件日志 CSV</button>
+      <button id="exp-board">导出看板 CSV</button>
+    </div>
+    <div class="hint">导出的是当前服务连接的数据库（见上方「数据库」卡片）。原始库文件请另行备份，不要靠删记录制造“干净库”。</div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { token: "", tab: "board" };
+const PHASE = { pretest: "前测", practice: "练习", posttest: "后测" };
+
+function tokenHeaders() { return state.token ? { "X-Admin-Token": state.token } : {}; }
+function esc(s) { return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+async function api(path, opts) {
+  const resp = await fetch(path, Object.assign({ headers: tokenHeaders() }, opts || {}));
+  if (resp.status === 403) throw new Error("令牌无效，或本机以外的地址访问被拒绝");
+  if (resp.status === 404) throw new Error("管理接口未启用：服务端没有配置 PH_ADMIN_TOKEN_FILE");
+  if (!resp.ok) throw new Error("请求失败 " + resp.status);
+  return resp.json();
+}
+
+function table(el, rows) {
+  const head = el.querySelector("thead"), body = el.querySelector("tbody");
+  if (!rows.length) { head.innerHTML = ""; body.innerHTML = `<tr><td class="muted">暂无数据</td></tr>`; return; }
+  const cols = Object.keys(rows[0]);
+  head.innerHTML = "<tr>" + cols.map((c) => `<th>${esc(c)}</th>`).join("") + "</tr>";
+  body.innerHTML = rows.map((r) => "<tr>" + cols.map((c) => {
+    let v = r[c];
+    if (c === "pass_status") return `<td class="${v ? "ok" : "bad"}">${v ? "通过" : "未通过"}</td>`;
+    if (c === "status") return `<td class="${v === "pass" ? "ok" : "warn"}">${esc(v)}</td>`;
+    return `<td>${esc(v)}</td>`;
+  }).join("") + "</tr>").join("");
+}
+
+async function loadSummary() {
+  const s = await api("/api/admin/summary");
+  $("cards").innerHTML = [
+    ["参与者", s.participants], ["提交", s.submissions], ["通过", s.passes],
+    ["提示事件", s.hint_events], ["事件总数", s.events], ["最近提交", s.last_submission_ts || "—"],
+    ["批次", s.batch || "（未设置）"], ["数据库", s.db_path],
+  ].map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+}
+
+async function loadBoard() { table($("t-board"), await api("/api/admin/board")); }
+async function loadSubs() {
+  const p = encodeURIComponent($("f-pid").value.trim());
+  const q = encodeURIComponent($("f-qid").value.trim());
+  table($("t-sub"), await api(`/api/admin/submissions?participant_id=${p}&question_id=${q}&limit=200`));
+}
+async function loadEvents() { table($("t-evt"), await api("/api/admin/events?limit=200")); }
+
+async function loadQuestions() {
+  const rows = await api("/api/admin/questions");
+  $("qlist").innerHTML = rows.map((q) => `
+    <label><input type="checkbox" class="q-pick" value="${esc(q.id)}" ${q.published ? "checked" : ""} />
+      <b>${esc(q.id)}</b> ${esc(q.title)} <span class="muted">${esc(PHASE[q.phase] || q.phase || "")} · 难度 ${esc(q.difficulty)}</span></label>`).join("");
+}
+
+async function refresh() {
+  try {
+    await loadSummary();
+    if (state.tab === "board") await loadBoard();
+    if (state.tab === "submissions") await loadSubs();
+    if (state.tab === "events") await loadEvents();
+    if (state.tab === "questions") await loadQuestions();
+    $("conn").textContent = "已连接";
+    $("conn").className = "ok";
+  } catch (e) {
+    $("conn").textContent = e.message; $("conn").className = "bad";
+  }
+}
+
+function showTab(name) {
+  state.tab = name;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  ["board", "submissions", "events", "questions", "codes", "export"].forEach((n) => {
+    $("panel-" + n).hidden = n !== name;
+  });
+  refresh();
+}
+
+$("tabs").onclick = (e) => { if (e.target.dataset.tab) showTab(e.target.dataset.tab); };
+$("btn-connect").onclick = () => {
+  state.token = ($("token").value || "").trim();
+  try { sessionStorage.setItem("ph_admin_token", state.token); } catch (e) {}
+  refresh();
+};
+$("btn-refresh").onclick = () => refresh();
+$("btn-filter").onclick = () => loadSubs();
+
+$("btn-all").onclick = () => document.querySelectorAll(".q-pick").forEach((c) => { c.checked = true; });
+$("btn-none").onclick = () => document.querySelectorAll(".q-pick").forEach((c) => { c.checked = false; });
+async function publish(flag) {
+  const ids = Array.from(document.querySelectorAll(".q-pick:checked")).map((c) => c.value);
+  if (!ids.length) return;
+  await api("/api/admin/publish", {
+    method: "POST",
+    headers: Object.assign({ "Content-Type": "application/json" }, tokenHeaders()),
+    body: JSON.stringify({ question_ids: ids, published: flag }),
+  });
+  await loadQuestions();
+}
+$("btn-publish").onclick = () => publish(true);
+$("btn-unpublish").onclick = () => publish(false);
+
+$("btn-code").onclick = async () => {
+  const phases = Array.from(document.querySelectorAll(".c-phase:checked")).map((c) => c.value);
+  try {
+    const out = await api("/api/admin/access-code", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, tokenHeaders()),
+      body: JSON.stringify({ participant_id: $("c-pid").value.trim(), phases, hours: Number($("c-hours").value) || 8 }),
+    });
+    $("code-out").hidden = false;
+    $("code-out").textContent = `${out.participant_id}（${out.phases.map((p) => PHASE[p] || p).join("/")}，${out.hours} 小时）\n${out.code}\n\n${out.note}`;
+  } catch (e) {
+    $("code-out").hidden = false; $("code-out").textContent = e.message;
+  }
+};
+
+async function download(what, filename) {
+  const resp = await fetch(`/api/admin/export/${what}.csv`, { headers: tokenHeaders() });
+  if (!resp.ok) { alert("导出失败：" + resp.status); return; }
+  const blob = await resp.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+}
+$("exp-sub").onclick = () => download("submissions", "submissions.csv");
+$("exp-evt").onclick = () => download("events", "events.csv");
+$("exp-board").onclick = () => download("board", "board.csv");
+
+try {
+  const saved = sessionStorage.getItem("ph_admin_token");
+  if (saved) { $("token").value = saved; state.token = saved; refresh(); }
+} catch (e) {}
+</script>
+</body>
+</html>

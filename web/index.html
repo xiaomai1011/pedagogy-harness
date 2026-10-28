@@ -410,7 +410,15 @@
 
   // ---------- 题目 ----------
   async function loadQuestionList() {
-    const list = await (await fetch("/api/questions")).json();
+    const resp = await fetch("/api/questions", { headers: accessHeaders() });
+    if (resp.status === 403) {
+      const d = await resp.json().catch(() => ({}));
+      $("qcount").textContent = "";
+      $("qlist").innerHTML = `<span class="muted">${esc(accessErrorText(d))}</span>`;
+      $("qdetail").innerHTML = '<div class="muted">填写负责人发放的实验访问码后，这里只显示该阶段允许做的题目；改完访问码会自动刷新。</div>';
+      return;
+    }
+    const list = await resp.json();
     $("qcount").textContent = list.length ? list.length + " 题" : "";
     if (!list.length) {
       $("qlist").innerHTML =
@@ -450,6 +458,16 @@
   } catch (e) { /* 隐私模式下忽略 */ }
   $("pid").addEventListener("change", () => {
     try { sessionStorage.setItem("ph_pid", $("pid").value || ""); } catch (e) { /* 忽略 */ }
+  });
+
+  // 访问码也留在 sessionStorage：刷新后不用重填，题目列表才能按阶段/发布状态过滤。
+  try {
+    const savedCode = sessionStorage.getItem("ph_access");
+    if (savedCode) $("access").value = savedCode;
+  } catch (e) { /* 隐私模式下忽略 */ }
+  $("access").addEventListener("change", () => {
+    try { sessionStorage.setItem("ph_access", ($("access").value || "").trim()); } catch (e) { /* 忽略 */ }
+    loadQuestionList();   // 改完访问码立刻按新身份/阶段刷新题目列表
   });
 
   // 请求号存进 sessionStorage：页面刷新后仍能点「重看提示」，服务端会回放上次结果（不升级、不调模型）。
