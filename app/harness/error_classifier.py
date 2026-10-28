@@ -41,14 +41,45 @@ RULE_TABLE = (
               "ValueError", "StopIteration")),
 )
 
-# 教学类别 → 知识点关键词。在 question["knowledge_points"] 里按关键词挑一个。
-KP_KEYWORDS = {
-    "语法": ("语法", "变量", "赋值", "标识符", "输出", "输入"),
-    "类型": ("类型", "数据", "转换", "字符串"),
-    "边界": ("边界", "索引", "取值", "范围", "条件"),
-    "逻辑": ("逻辑", "循环", "条件", "判断", "算法", "顺序"),
-    "环境": ("环境", "输入输出", "标准输入", "文件", "递归"),
+# 教学类别 → 知识点关键词。**弱回退**：只有在 stderr 里**没有任何异常名证据**时才用
+# （典型是 wrong_output、空 stderr），避免把题目主知识点硬套到具体报错上。
+CLASS_KP_KEYWORDS = {
+    "语法": ("语法", "变量", "赋值", "标识符", "输出", "输入", "缩进"),
+    "类型": ("类型", "数据", "转换", "字符串", "整数"),
+    "边界": ("边界", "索引", "下标", "取值", "范围", "条件", "越界"),
+    "逻辑": ("逻辑", "循环", "遍历", "迭代", "条件", "判断", "算法", "顺序",
+             "比较", "排序", "最大", "最小", "列表", "切片", "取模", "余数", "奇偶"),
+    "环境": ("环境", "输入输出", "标准输入", "标准输出", "文件", "递归", "内存"),
 }
+
+# 兼容旧名字（外部/测试若直接引用 KP_KEYWORDS，拿到的是弱回退表）。
+KP_KEYWORDS = CLASS_KP_KEYWORDS
+
+# **强证据**：stderr 里出现哪个异常名，就只允许关联这几类知识点关键词。
+# 顺序即优先级；一个都没匹配上时**宁可留空**，也不退回去套题目主题。
+EVIDENCE_KP = {
+    "indexerror": ("索引", "下标", "列表", "数组", "切片", "越界", "边界"),
+    "keyerror": ("键", "字典", "映射", "边界"),
+    "zerodivisionerror": ("取模", "整除", "余数", "除法", "除零"),
+    "nameerror": ("变量", "赋值", "标识符", "函数", "参数", "拼写"),
+    "unboundlocalerror": ("变量", "赋值", "作用域", "函数"),
+    "typeerror": ("类型", "转换", "字符串", "整数", "浮点", "数据"),
+    "attributeerror": ("属性", "对象", "方法", "类型"),
+    "valueerror": ("取值", "转换", "范围", "输入", "类型"),
+    "syntaxerror": ("语法", "括号", "语句", "缩进"),
+    "indentationerror": ("缩进", "语法", "代码块"),
+    "taberror": ("缩进", "语法"),
+    "recursionerror": ("递归", "深度", "函数"),
+    "memoryerror": ("内存", "资源"),
+    "filenotfounderror": ("文件", "路径", "读写"),
+    "permissionerror": ("权限", "文件", "环境"),
+    "importerror": ("模块", "导入", "库"),
+    "modulenotfounderror": ("模块", "导入", "库"),
+    "stopiteration": ("迭代", "遍历", "循环", "生成器"),
+}
+
+# traceback 里的异常行形如 `IndexError: list index out of range`，行首即异常名。
+_EXC_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*)\b")
 
 _LLM_SYSTEM = (
     "你是编程教学错误分类器，只做分类，不写代码、不给任何解题提示。"
@@ -81,25 +112,68 @@ def match_rule(judge_result, code: str) -> str | None:
         return "语法"          # 判题器已判为语法错，无需再看 stderr
     for error_class, names in RULE_TABLE:
         for name in names:
-            if name in stderr:
+            # 大小写不敏感：`indexerror`、`Syntaxerror` 这类写法同样算证据
+            if name.lower() in stderr.lower():
                 return error_class
     if error_type == "wrong_output":
         return "逻辑"          # 程序正常结束，但结果与期望不符
     return None
 
 
-def _guess_knowledge_point(error_class: str, question: dict) -> str:
-    """在题目的知识点列表里按关键词挑一个；挑不到就返回空串（不硬凑）。
-
-    挑不到时留空是契约 §3 允许的（`error_kp` 无则空串），
-    避免把随便一个知识点写进日志、污染后续统计。
-    """
-    points = [p for p in (question or {}).get("knowledge_points", []) if p]
-    for keyword in KP_KEYWORDS.get(error_class, ()):
+def _match_point(keywords, points: list[str]) -> str:
+    """在题目知识点里按关键词挑一个（大小写不敏感）；挑不到返回空串。"""
+    for keyword in keywords:
+        lowered = keyword.lower()
         for point in points:
-            if keyword in point:
+            if lowered in point.lower():
                 return point
     return ""
+
+
+def _evidence_names(stderr: str) -> list[str]:
+    """stderr 里**真正抛出的异常行**出现的异常名（小写），按 EVIDENCE_KP 优先级排序。
+
+    只认行首的异常名，并跳过 traceback 里 `File "...", line N` 之后那行源码——
+    否则学生代码里的字符串（例如 `print("ZeroDivisionError")`）会被当成证据，
+    把错误记到不相干的知识点上。
+    """
+    found: set[str] = set()
+    skip_source_line = False
+    for raw in (stderr or "").splitlines():
+        line = raw.strip()
+        if skip_source_line:
+            skip_source_line = False
+            continue
+        if line.startswith('File "'):
+            skip_source_line = True
+            continue
+        match = _EXC_LINE_RE.match(line)
+        if not match:
+            continue
+        name = match.group(1).lower()
+        if name in EVIDENCE_KP:
+            found.add(name)
+    return [name for name in EVIDENCE_KP if name in found]
+
+
+def _guess_knowledge_point(error_class: str, question: dict, stderr: str = "") -> str:
+    """给错误挑一个知识点：**强证据优先，弱回退在后，没证据就留空**。
+
+    1. stderr 里有异常名 → 只按该异常名允许的知识点关键词匹配；
+       匹配不上就返回空串（**绝不**退回"题目主题"，否则运行时输入错误会被
+       记成题目主知识点，污染错误记忆）。
+    2. stderr 里没有任何异常名（典型是 wrong_output）→ 才用教学类别关键词做弱回退。
+    3. 都不行 → 空串（契约 §3 允许 `error_kp` 为空）。
+    """
+    points = [p for p in (question or {}).get("knowledge_points", []) if p]
+    names = _evidence_names(stderr)
+    for name in names:
+        hit = _match_point(EVIDENCE_KP[name], points)
+        if hit:
+            return hit
+    if names:
+        return ""
+    return _match_point(KP_KEYWORDS.get(error_class, ()), points)
 
 
 def _parse_llm_reply(raw: str, points: list[str]) -> Classification:
@@ -149,7 +223,8 @@ def classify(judge_result, code: str, question: dict) -> Classification:
     error_class = match_rule(judge_result, code)
     if error_class is not None:
         return Classification(error_class=error_class,
-                              knowledge_point=_guess_knowledge_point(error_class, question),
+                              knowledge_point=_guess_knowledge_point(
+                                  error_class, question, getattr(judge_result, "stderr", "") or ""),
                               source="rule")
     if getattr(judge_result, "status", "") == "pass":
         # 通过：没有错误可分类。这里若调模型，既浪费一次调用又会引入噪声标签。
@@ -167,7 +242,8 @@ def classify_rule_only(judge_result, code: str, question: dict) -> Classificatio
     if error_class is None:
         return Classification(error_class="未分类", knowledge_point="", source="none")
     return Classification(error_class=error_class,
-                          knowledge_point=_guess_knowledge_point(error_class, question),
+                          knowledge_point=_guess_knowledge_point(
+                              error_class, question, getattr(judge_result, "stderr", "") or ""),
                           source="rule")
 
 

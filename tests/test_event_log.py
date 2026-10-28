@@ -408,7 +408,7 @@ def test_phase_disabled_response_hides_diagnostics_everywhere(monkeypatch):
     question = {"id": "P001", "title": "测试题", "statement": "读入一个整数并输出。",
                 "examples": [{"input": "1", "output": "1"}], "test_cases": [],
                 "reference_solution": "print(input())\n",
-                "knowledge_points": ["变量与赋值"], "difficulty": 1, "phase": "pretest"}
+                "knowledge_points": ["语法与变量"], "difficulty": 1, "phase": "pretest"}
     monkeypatch.setattr(pipeline_mod, "load_question", lambda qid: dict(question))
 
     pid = "T_EV_LEAK_PRE_1"
@@ -417,11 +417,11 @@ def test_phase_disabled_response_hides_diagnostics_everywhere(monkeypatch):
 
     # 内部记录：仍然留下确定性分类（用于测量）
     assert _last_submission(pid)["error_class"] == "语法"
-    assert _last_submission(pid)["error_kp"] == "变量与赋值"
+    assert _last_submission(pid)["error_kp"] == "语法与变量"
     # 学生可见的**整个结构**（含嵌套 log）都不得出现教学诊断
     blob = json.dumps(out, ensure_ascii=False)
     assert "语法" not in blob, "响应里任何位置都不得出现教学分类"
-    assert "变量与赋值" not in blob, "响应里（尤其 `log.error_kp`）不得出现知识点"
+    assert "语法与变量" not in blob, "响应里（尤其 `log.error_kp`）不得出现知识点"
     assert out["log"] is not None and "error_kp" not in out["log"]
 
 

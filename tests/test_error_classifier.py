@@ -57,9 +57,20 @@ def test_wrong_output_is_logic():
     assert (c.error_class, c.source) == ("逻辑", "rule")
 
 
-def test_knowledge_point_matched_by_keyword():
-    c = ec.classify(_Judge(error_type="syntax", stderr="SyntaxError"), "x =", _Q)
-    assert c.knowledge_point == "标准输入输出"
+def test_knowledge_point_matched_by_evidence():
+    """异常名是强证据：IndexError 只允许落到「索引/下标/边界…」类知识点上。
+
+    旧版靠「语法类关键词」去套题目文案（`标准输入输出` 因含「输入」被当成语法错），
+    现在语法错若对不上知识点就留空——见 tests/test_error_classifier_coverage.py。
+    """
+    c = ec.classify(_Judge(error_type="runtime",
+                           stderr="IndexError: list index out of range"), "x =", _Q)
+    assert c.error_class == "边界"
+    assert c.knowledge_point == "边界条件"
+
+    c2 = ec.classify(_Judge(error_type="syntax", stderr="SyntaxError"), "x =", _Q)
+    assert c2.error_class == "语法"
+    assert c2.knowledge_point == ""
 
 
 def test_knowledge_point_stays_empty_when_nothing_matches():
