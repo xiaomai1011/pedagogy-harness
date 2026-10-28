@@ -179,7 +179,7 @@
   <header class="titlebar">
     <h1>教学法 Harness 练习助手</h1>
     <label class="muted">被试编号 <input class="pid" id="pid" value="S01" /></label>
-    <label class="muted">实验访问码 <input class="pid" id="access" placeholder="负责人发放（可留空）" /></label>
+    <label class="muted">实验访问码 <input class="pid" id="access" placeholder="负责人发放（粘贴整串）" /><span class="muted" id="access-len" style="font-size:12px;margin-left:6px"></span></label>
     <span class="notice idle" id="op-state">服务就绪</span>
     <span class="notice idle" id="id-state" title="这里只反映身份校验状态：未验证＝尚未用访问码提交过任何请求">身份：未验证</span>
     <span class="spacer"></span>
@@ -477,6 +477,8 @@
     const resp = await fetch("/api/questions", { headers: accessHeaders() });
     if (resp.status === 403) {
       const d = await resp.json().catch(() => ({}));
+      state.question = null;
+      const cur0 = $("q-current"); if (cur0) { cur0.textContent = ""; cur0.title = ""; }
       $("qcount").textContent = "";
       $("qlist").innerHTML = `<span class="muted">${esc(accessErrorText(d))}</span>`;
       $("qdetail").innerHTML = '<div class="muted">填写负责人发放的实验访问码后，这里只显示该阶段允许做的题目；改完访问码会自动刷新。</div>';
@@ -529,6 +531,15 @@
   $("pid").addEventListener("change", () => {
     try { sessionStorage.setItem("ph_pid", $("pid").value || ""); } catch (e) { /* 忽略 */ }
   });
+  // 手机复制长串时常带换行/空格：粘贴后自动去掉所有空白，并显示长度便于核对是否粘贴完整。
+  $("access").addEventListener("input", () => {
+    const el = $("access");
+    const cleaned = (el.value || "").replace(/\s+/g, "");
+    if (cleaned !== el.value) el.value = cleaned;
+    $("access-len").textContent = cleaned ? "已输入 " + cleaned.length + " 字符" : "";
+    clearTimeout(_idTimer);
+    _idTimer = setTimeout(syncIdentity, 400);
+  });
 
   // 访问码也留在 sessionStorage：刷新后不用重填，题目列表才能按阶段/发布状态过滤。
   try {
@@ -537,6 +548,7 @@
   } catch (e) { /* 隐私模式下忽略 */ }
   $("access").addEventListener("change", () => {
     try { sessionStorage.setItem("ph_access", ($("access").value || "").trim()); } catch (e) { /* 忽略 */ }
+    syncIdentity();
     loadQuestionList();   // 改完访问码立刻按新身份/阶段刷新题目列表
   });
 
@@ -560,7 +572,15 @@
     $("btn-hint").textContent = hintButtonLabel();
     refreshButtons();
     document.querySelectorAll(".q-item").forEach((el) => el.classList.toggle("sel", el.dataset.id === qid));
-    state.question = await (await fetch(`/api/questions/${encodeURIComponent(qid)}`)).json();
+    const qresp = await fetch(`/api/questions/${encodeURIComponent(qid)}`, { headers: accessHeaders() });
+    if (!qresp.ok) {
+      const d = await qresp.json().catch(() => ({}));
+      state.question = null;
+      $("qdetail").innerHTML = `<div class="muted">${esc(accessErrorText(d))}</div>`;
+      refreshBanner(); refreshButtons();
+      return;
+    }
+    state.question = await qresp.json();
     const q = state.question;
     // 评测用例不下发也不提前展示：页面上只给题面里的示例，用例结果在提交后由判题反馈体现
     const exList = q.examples || [];
@@ -705,8 +725,10 @@
 
   // ---------- 请求 ----------
   function baseBody() {
-    const pid = ($("pid").value || "").trim();
-    if (!pid) { notify("bad", "请先填写被试编号", "op-msg"); throw new Error("no participant_id"); }
+    // 有访问码时，身份由服务端从凭证解析；页面不提交自填编号（避免"该填谁"的困扰和冒名）。
+    const hasCode = !!($("access").value || "").replace(/\s+/g, "");
+    const pid = hasCode ? "" : ($("pid").value || "").trim();
+    if (!hasCode && !pid) { notify("bad", "请先填写被试编号", "op-msg"); throw new Error("no participant_id"); }
     if (!state.qid) { notify("bad", "请先选择题目", "op-msg"); throw new Error("no question_id"); }
     return { participant_id: pid, question_id: state.qid, code: getCode() };
   }
@@ -796,8 +818,28 @@
     return "r-" + Date.now() + "-" + Math.random().toString(16).slice(2);
   }
   function accessHeaders() {
-    const code = ($("access").value || "").trim();
+    const code = ($("access").value || "").replace(/\s+/g, "");
     return code ? { "X-Access-Code": code } : {};
+  }
+
+  // 访问码模式：编号不由学生填写，服务端按码解析后回填为只读
+  let _idTimer = null;
+  async function syncIdentity() {
+    const code = ($("access").value || "").replace(/\s+/g, "");
+    if (!code) { $("pid").readOnly = false; return; }
+    try {
+      const r = await fetch("/api/me", { headers: accessHeaders() });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.participant_id) {
+        $("pid").value = d.participant_id;
+        $("pid").readOnly = true;
+        $("st-pid").textContent = d.participant_id + "（由访问码确定）";
+        setIdentity("ok", "身份：已验证 " + d.participant_id);
+      } else {
+        $("pid").readOnly = false;
+        setIdentity("bad", "身份：未通过");
+      }
+    } catch (e) { /* 忽略 */ }
   }
 
   // 自动登记模式：新电脑第一次打开时由服务端分配编号（Cookie 记住），编号框改为只读。
@@ -817,7 +859,10 @@
   }
   function accessErrorText(d) {
     const s = (d && d.detail && d.detail.status) || "";
-    if (s === "access_denied") return "访问码无效或已过期，请联系负责人重新领取。";
+    if (s === "access_denied") {
+      const n = ($("access").value || "").replace(/\s+/g, "").length;
+      return "访问码无效或已过期（当前输入 " + n + " 字符，完整一串应为 189 字符，请重新整串粘贴）";
+    }
     if (s === "phase_not_allowed") return "该题不属于当前实验阶段，已拒绝（不会判题）。";
     if (s === "identity_mismatch") return "被试编号与访问码不一致，请核对。";
     return "请求被拒绝：" + s;
@@ -837,6 +882,7 @@
   loadStatus();
   loadComponents();
   ensureEnrollment();
+  syncIdentity();
   loadQuestionList();
 </script>
 </body>

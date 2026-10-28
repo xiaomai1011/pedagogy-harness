@@ -139,3 +139,22 @@ def test_wrong_batch_rejected(monkeypatch, secret):
                         x_access_code=code)
     assert exc.value.status_code == 403
     assert exc.value.detail["status"] == "batch_mismatch"
+
+def test_question_detail_requires_code_and_respects_phase(monkeypatch, secret):
+    """回归：题目详情既要凭证，也要按凭证允许的阶段判定（防止知道题号就绕阶段）。"""
+    monkeypatch.setenv("PH_REQUIRE_ACCESS_CODE", "1")
+    monkeypatch.setenv("PH_EXPERIMENT_BATCH", "B1")
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    code = access.issue_code("S001", batch="B1", phases=("practice",), ttl_seconds=600)
+    client = TestClient(app)
+    assert client.get("/api/questions/P001").status_code == 403
+    ok = client.get("/api/questions/P001", headers={"X-Access-Code": code})
+    assert ok.status_code == 200
+    assert ok.json()["id"] == "P001"
+    assert "test_cases" not in ok.json()
+    denied = client.get("/api/questions/S001", headers={"X-Access-Code": code})
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["status"] == "phase_not_allowed"

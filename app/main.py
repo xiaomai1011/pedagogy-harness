@@ -166,7 +166,7 @@ def _config(group: str):
 
 
 class SubmitRequest(BaseModel):
-    participant_id: str
+    participant_id: str = ""     # 留空时由访问码/登记 Cookie 决定身份（学生不必手填）
     question_id: str
     code: str
     group: str = "exp"          # 仅供联调/演示；默认被服务端忽略，一律按 exp 记
@@ -174,7 +174,7 @@ class SubmitRequest(BaseModel):
 
 
 class HintRequest(BaseModel):
-    participant_id: str
+    participant_id: str = ""     # 同上：留空则由服务端凭证解析
     question_id: str
     code: str = ""              # 当前编辑器里的代码，供大模型看到"学生卡在哪"
     hint_request_id: str = ""   # 同一次点击的幂等键（刷新/重试复用，服务端回放不升级）
@@ -250,6 +250,28 @@ def index() -> str:
     return (WEB_DIR / "index.html").read_text(encoding="utf-8")
 
 
+@app.get("/api/me")
+def api_me(x_access_code: str = Header(default=None)) -> dict:
+    """身份自证：带有效访问码时返回**服务端认可**的参与者编号与批次。
+
+    页面用它把编号显示成只读，学生不需要自己填写；
+    未启用访问码时返回 `access_required=false`，由自动登记或手填编号处理。
+    """
+    if not access.access_required():
+        return {"access_required": False}
+    claims = _claims(x_access_code)          # 缺失/伪造/过期/批次不符都在这里 403
+    if claims is None:
+        raise HTTPException(status_code=403, detail={
+            "status": "access_denied", "code": "missing_code",
+            "message": "请先填写实验访问码。",
+        })
+    return {"access_required": True,
+            "participant_id": claims.participant_id,
+            "batch": claims.batch,
+            "phases": list(claims.phases),
+            "expires_at": claims.expires_at}
+
+
 @app.get("/api/questions")
 def api_questions(x_access_code: str = Header(default=None)) -> list[dict]:
     """题目列表：带有效访问码时**只返回该批次允许的阶段**（服务端约束，不靠客户端传 phase）。"""
@@ -314,7 +336,7 @@ def api_question(question_id: str, x_access_code: str = Header(default=None)) ->
     q = load_question(question_id)
     claims = _claims(x_access_code)
     if claims is not None:
-        _require_phase_allowed(claims, question_id)
+        _require_phase_allowed(question_id, claims)
     # 不下发参考解与评测用例：题面示例走 examples，用例一律提交后才在判题结果里体现
     q.pop("reference_solution", None)
     q.pop("test_cases", None)
