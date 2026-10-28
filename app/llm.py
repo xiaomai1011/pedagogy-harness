@@ -98,6 +98,25 @@ def _reasoning_effort() -> str | None:
     return value or None
 
 
+def _sanitize_proxy_env() -> None:
+    """剔除会毒化 HTTP 客户端的 `NO_PROXY` 条目。
+
+    背景（2026-10-28 实测）：本机环境里 `NO_PROXY=localhost,127.0.0.1,::1,[::1]`，
+    其中的方括号 IPv6 写法 `[::1]` 会让 HTTP 客户端在**建连接池时**就抛
+    `httpx2.InvalidURL: Invalid port: ':1]'`——表现为"大模型一调用就崩"，
+    与模型服务本身无关。这里只去掉带方括号的条目，代理本身照常生效。
+    """
+
+    for key in ("NO_PROXY", "no_proxy"):
+        raw = os.environ.get(key)
+        if not raw:
+            continue
+        parts = [item.strip() for item in raw.split(",") if item.strip()]
+        keep = [item for item in parts if "[" not in item and "]" not in item]
+        if keep != parts:
+            os.environ[key] = ",".join(keep)
+
+
 def llm(system: str, user: str, *, temperature: float = DEFAULT_TEMPERATURE,
         max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     """按 system/user 调用大模型，返回纯文本。
@@ -108,6 +127,8 @@ def llm(system: str, user: str, *, temperature: float = DEFAULT_TEMPERATURE,
     if not is_configured():
         return ("[桩·大模型] 未配置 PH_LLM_BASE_URL / PH_LLM_API_KEY / PH_LLM_MODEL，"
                 "此处为占位响应。")
+
+    _sanitize_proxy_env()
 
     from openai import OpenAI  # 延迟导入：未配置时不强制安装 openai
 

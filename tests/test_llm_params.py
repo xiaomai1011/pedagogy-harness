@@ -13,6 +13,7 @@
 """
 
 import inspect
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -154,3 +155,11 @@ def test_requirements_floor_is_safe_without_param():
         "若默认改为发送 reasoning_effort，则必须把 requirements.txt 的 "
         "openai 下限抬到 >=1.60（该参数进入 create() 签名的版本）"
     )
+
+def test_sanitize_proxy_env_drops_bracketed_entries(monkeypatch):
+    """NO_PROXY 里带方括号的 IPv6 条目会让 HTTP 客户端建池时报 Invalid port: ':1]'（2026-10-28 实测）。"""
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,::1,[::1]")
+    llm._sanitize_proxy_env()
+    value = os.environ.get("NO_PROXY", "")
+    assert "[" not in value and "]" not in value, value
+    assert "localhost" in value and "127.0.0.1" in value

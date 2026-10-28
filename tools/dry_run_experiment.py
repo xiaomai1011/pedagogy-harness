@@ -30,6 +30,11 @@ sys.path.insert(0, str(REPO))
 
 # 必须在导入 app.main 之前设置：登记适配器 + 用临时库
 _TMP_DB = Path(tempfile.gettempdir()) / f"ph_dryrun_{int(time.time())}.sqlite"
+# 允许 --db 指定独立实验库（正式实验前的最终预演用），必须在导入 app 之前解析
+if "--db" in sys.argv:
+    _db_flag = sys.argv[sys.argv.index("--db") + 1]
+    _TMP_DB = Path(_db_flag).expanduser().resolve()
+    _TMP_DB.parent.mkdir(parents=True, exist_ok=True)
 os.environ["PH_DB"] = str(_TMP_DB)
 os.environ.setdefault("PH_VM_AGENT_ENABLED", "1")
 
@@ -53,6 +58,8 @@ def _solution(qid: str) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(REPO / "docs" / "G7_预演报告.json"))
+    ap.add_argument("--db", default=None,
+                    help="指定独立实验库路径（默认用 %%TEMP%% 下的临时库）")
     ap.add_argument("--participant", default=f"DRYRUN-{time.strftime('%Y%m%d-%H%M%S')}")
     ap.add_argument("--no-stub-llm", action="store_true",
                     help="不替换大模型（默认用本地桩，避免预演依赖外部 API）")
