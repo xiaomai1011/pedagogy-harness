@@ -54,8 +54,8 @@
 - ``submission_log`` 只记**正式提交**；**全部判题次数要看 ``event_log`` 的 ``execution`` 事件**
   （可统计**执行尝试登记数／判题完成数／中止数／无终态数**）。历史未采集事件的记录**不能补推**；
   本脚本的三份 CSV **暂未包含执行事件明细**，但这**不等于**数据库里没有这些信息；
-- **代码全文与提示正文都不落库** ⇒ 无法分析代码修改过程或提示内容质量；
-- ``error_class``／``error_kp`` 由教学组件回填，**对照组恒为「未分类」**，
+- ``submission_log.code`` 保存**提交时的代码原文**（截断 20000 字符），可复盘改写过程；
+  提示正文保存在 ``hint_state.last_response``（按参与者+题目回放），**不在本三份 CSV 里**；- ``error_class``／``error_kp`` 由教学组件回填，**对照组恒为「未分类」**，
   不能当作「该被试没犯这类错」；
 - 前后测阶段教学组件按契约记 ``phase_disabled``；**``phase_disabled`` 不等于这些内部记录不存在**。
 
@@ -101,7 +101,7 @@ SUBMISSION_COLUMNS = (
 # 提示事件明细刻意**不含** event_log.reason（自由描述）；只留受控码。
 HINT_COLUMNS = (
     "event_id", "request_id", "submission_id", "participant_id", "question_id", "phase",
-    "entry", "ts_start", "ts_end", "elapsed_ms", "status", "hint_level",
+    "entry", "ts_start", "ts_end", "elapsed_ms", "model_ms", "status", "hint_level",
     "unlocked_level", "hint_source", "reason_code",
 )
 
@@ -468,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
           "两者都不得直接当成绩；\n"
           "          submission_log 只是正式提交；**全部判题次数要看 event_log 的 execution 事件**"
           "（登记／完成／中止／无终态可统计），本三份 CSV 暂未含执行事件明细；\n"
-          "          代码全文与提示正文均未落库，无法做过程性分析。")
+          "          代码原文在 submission_log.code（本导出未含该列），提示正文在 hint_state.last_response。")
     return EXIT_OK
 
 
