@@ -412,10 +412,31 @@
     selectQuestion(list[0].id);
   }
 
+  // 被试编号也放进 sessionStorage：刷新后不会退回默认 S01，避免与访问码里的身份对不上。
+  try {
+    const savedPid = sessionStorage.getItem("ph_pid");
+    if (savedPid) $("pid").value = savedPid;
+  } catch (e) { /* 隐私模式下忽略 */ }
+  $("pid").addEventListener("change", () => {
+    try { sessionStorage.setItem("ph_pid", $("pid").value || ""); } catch (e) { /* 忽略 */ }
+  });
+
+  // 请求号存进 sessionStorage：页面刷新后仍能点「重看提示」，服务端会回放上次结果（不升级、不调模型）。
+  function hintStoreKey() {
+    const pid = ($("pid").value || "").trim();
+    return "ph_hint_rid:" + pid + ":" + (state.qid || "");
+  }
+  function saveHintRid(rid) {
+    try { if (rid) sessionStorage.setItem(hintStoreKey(), rid); } catch (e) { /* 隐私模式下忽略 */ }
+  }
+  function loadHintRid() {
+    try { return sessionStorage.getItem(hintStoreKey()) || ""; } catch (e) { return ""; }
+  }
+
   async function selectQuestion(qid) {
     state.qid = qid;
-    // 切题：清掉「上一次提示」的本地回放号（服务器仍按题保存历史等级）
-    state.lastHintRequestId = "";
+    // 切题：先清空，再从会话存储里恢复该题上一次成功提示的请求号（刷新页面也能「重看」）
+    state.lastHintRequestId = loadHintRid();
     state.hintRequested = false;
     $("btn-hint").textContent = hintButtonLabel();
     refreshButtons();
@@ -515,7 +536,7 @@
     const requested = !!d.hint_requested;
     if (requested) {
       state.hintRequested = true;
-      if (d.hint_request_id) state.lastHintRequestId = d.hint_request_id;
+      if (d.hint_request_id) { state.lastHintRequestId = d.hint_request_id; saveHintRid(d.hint_request_id); }
     }
     $("btn-hint").textContent = hintButtonLabel();
     refreshButtons();
@@ -638,7 +659,7 @@
         notify("bad", accessErrorText(d), "op-msg");
         return;
       }
-      if (!repeat) { state.hintRequested = true; state.lastHintRequestId = reqId; }
+      if (!repeat) { state.hintRequested = true; state.lastHintRequestId = reqId; saveHintRid(reqId); }
       renderAll(d);
       notify(repeat ? "ok" : "ok", repeat ? "已重新显示上次提示（未升级）" : "提示已返回", "op-msg");
     } catch (e) {
@@ -681,3 +702,4 @@
 </script>
 </body>
 </html>
+
