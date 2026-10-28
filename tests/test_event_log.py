@@ -1,4 +1,4 @@
-"""Q1／C／I 的**离线失败路径**测试（先红后绿）。
+﻿"""Q1／C／I 的**离线失败路径**测试（先红后绿）。
 
 依据：`docs/contracts.md` **§6 事件表 `event_log`**（2026-10-18 第三次修订）。
 
@@ -240,7 +240,9 @@ def test_phase_gating_three_entries(monkeypatch, phase):
                                           code="print(1)", config=PRESETS["exp"])
     assert _one(pid1, "execution")["status"] == "finished", "前后测仍须正常判题"
     assert _last_submission(pid1) is not None, "前后测仍须记录正式提交"
-    assert _one(pid1, "teaching")["status"] == "phase_disabled"
+    teach1 = _one(pid1, "teaching")
+    assert teach1["status"] == "phase_disabled"
+    assert teach1["model_ms"] == 0, "确认没有模型调用 ⇒ 记 0（不是 NULL）"
     assert _events(pid1, "hint") == [], "未请求提示则不得凭空创建提示事件"
     # 返回内容：不得含教学提示与教学诊断
     assert out1["message"] == pipeline_mod.PHASE_DISABLED_MESSAGE
@@ -260,6 +262,7 @@ def test_phase_gating_three_entries(monkeypatch, phase):
     exec2, hint2, teach2 = (_one(pid2, "execution"), _one(pid2, "hint"), _one(pid2, "teaching"))
     assert exec2["status"] == "finished"
     assert hint2["status"] == "phase_disabled"
+    assert hint2["model_ms"] == 0, "前测提示未调模型 ⇒ model_ms 记 0"
     assert teach2["status"] == "phase_disabled"
     assert exec2["request_id"] == hint2["request_id"] == teach2["request_id"], \
         "同一请求的三类事件必须共用同一个 request_id"
@@ -509,3 +512,4 @@ def test_plain_submit_without_hint_does_not_restate_judge(monkeypatch):
     assert "NameError" in out["stderr"]
     assert "未通过测试" in out["judge_feedback"]
     assert out["judge_feedback"] != out["message"]
+

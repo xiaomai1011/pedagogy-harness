@@ -67,6 +67,12 @@ def _counts(db_path: str) -> dict:
             out["last_hint_model_ms"] = row[0] if row else None
         except sqlite3.Error:
             out["last_hint_model_ms"] = None
+        try:
+            row = conn.execute("SELECT model_ms FROM event_log WHERE event_type='teaching' "
+                               "ORDER BY event_id DESC LIMIT 1").fetchone()
+            out["last_teaching_model_ms"] = row[0] if row else None
+        except sqlite3.Error:
+            out["last_teaching_model_ms"] = None
     return out
 
 
@@ -123,7 +129,7 @@ def main() -> int:
             f"status={status} field={payload.get('status')}")
     _record("pretest_hint_no_model_no_submission",
             after["submissions"] == before["submissions"]
-            and after["last_hint_model_ms"] is None,
+            and after["last_hint_model_ms"] == 0,
             f"events {before['events']}->{after['events']} submissions {before['submissions']}->{after['submissions']} model_ms={after['last_hint_model_ms']}")
 
     # 4) 练习阶段提示可用、等级 1、model_ms 有值
@@ -176,6 +182,10 @@ def main() -> int:
                            other_pid)
     _record("judge_pass_via_vm", status == 200 and passed.get("status") == "pass",
             f"status={status} judge={passed.get('status')} error_type={passed.get('error_type')}")
+    tstats = _counts(args.db)
+    _record("teaching_model_ms_recorded",
+            isinstance(tstats["last_teaching_model_ms"], int),
+            f"model_ms={tstats['last_teaching_model_ms']}（0 = 确认没调模型，不是未知）")
 
     # 9) 未知题目不应把单路锁卡死：异常路径后仍能正常请求
     status, _ = _post(args.base, "/api/submit",

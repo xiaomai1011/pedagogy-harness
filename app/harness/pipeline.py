@@ -285,6 +285,8 @@ def _finalize(conn, *, hint_event_id: int | None, teaching_event_id: int | None,
         produced = ((not request_hint) or ctx.source == "raw_llm" or ctx.hint_source is not None)
         db.update_event_conn(conn, teaching_event_id,
                              status="done" if produced else "partial",
+                             # 教学事件也记本次请求的模型总耗时（0 = 确认没调模型，不是未知）
+                             model_ms=llm_mod.total_elapsed_ms(),
                              reason_code="" if produced else "gen_unavailable",
                              reason="" if produced else "请求了提示但未产出可返回的提示",
                              ts_end=_now(), elapsed_ms=_elapsed_ms(ts, _now()))
@@ -357,6 +359,8 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
             status="requested" if teaching_on else "phase_disabled", hint_source=None,
             ts_end=None if teaching_on else ts,
             elapsed_ms=None if teaching_on else 0,
+            # 已确认本次没有模型调用 ⇒ 记 0；历史未采集才是 NULL（口径见契约 §6.2.2）
+            model_ms=None if teaching_on else 0,
             reason_code="" if teaching_on else "phase_disabled",
             reason="" if teaching_on else "前后测阶段不提供教学提示")
 
@@ -417,6 +421,8 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
                 status="pending" if teaching_on else "phase_disabled", progress="",
                 ts_end=None if teaching_on else ts,
                 elapsed_ms=None if teaching_on else 0,
+                # 前后测教学禁用：确认没有模型调用 ⇒ 0（历史未采集才为 NULL）
+                model_ms=None if teaching_on else 0,
                 reason_code="" if teaching_on else "phase_disabled",
                 reason="" if teaching_on else "前后测阶段禁用教学处理")
             # 执行终态**并入同一事务**（契约 §6.3 第 1 步），不再提前单独提交

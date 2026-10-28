@@ -2,7 +2,7 @@
   "base": "http://127.0.0.1:8010",
   "db": "data\\experiment_acceptance_20261028.sqlite",
   "batch": "ACCEPT-20261028",
-  "checked_at": "2026-10-28T10:48:30+0800",
+  "checked_at": "2026-10-28T10:57:44+0800",
   "checks": [
     {
       "check": "access_no_code",
@@ -42,7 +42,7 @@
     {
       "check": "pretest_hint_no_model_no_submission",
       "ok": true,
-      "detail": "events 0->1 submissions 0->0 model_ms=None"
+      "detail": "events 0->1 submissions 0->0 model_ms=0"
     },
     {
       "check": "practice_hint_level1",
@@ -52,7 +52,7 @@
     {
       "check": "hint_model_ms_recorded",
       "ok": true,
-      "detail": "model_ms=3618"
+      "detail": "model_ms=2273"
     },
     {
       "check": "duplicate_request_replays",
@@ -80,6 +80,11 @@
       "detail": "status=200 judge=pass error_type=none"
     },
     {
+      "check": "teaching_model_ms_recorded",
+      "ok": true,
+      "detail": "model_ms=1407（0 = 确认没调模型，不是未知）"
+    },
+    {
       "check": "lock_released_after_bad_request",
       "ok": true,
       "detail": "first=200 second=200"
@@ -90,6 +95,6 @@
       "detail": "status=429 field=busy"
     }
   ],
-  "passed": 17,
-  "total": 17
+  "passed": 18,
+  "total": 18
 }
