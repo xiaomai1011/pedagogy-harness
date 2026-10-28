@@ -1,0 +1,105 @@
+{
+  "id": "S006",
+  "title": "逐轮信号优先",
+  "statement": "【题目描述】\nA 与 B 进行 n 轮信号优先比较。R 表示红色，G 表示绿色，B 表示蓝色。红色优先于绿色，绿色优先于蓝色，蓝色优先于红色；信号优先的一方获得本轮胜利。每轮信号相同则平局，双方都不增加胜场。请判断谁的获胜轮数更多。\n\n【输入格式】\n第一行一个整数 n。接下来 n 行，每行两个大写字母，依次表示 A、B 在该轮的选择。\n\n【输出格式】\n输出一行：A 获胜轮数较多时输出 A，B 获胜轮数较多时输出 B，两人获胜轮数相等时输出 draw（小写）。\n\n【说明/提示】\n1≤n≤100；每个选择只能是 R、G、B。每行已经给出该轮双方选择，不存在周期展开。平局不计入任一胜场。\n\n设计限额：2 秒、256 MB。",
+  "examples": [
+    {
+      "input": "3\nR G\nG G\nB R",
+      "output": "A"
+    },
+    {
+      "input": "2\nG R\nB G",
+      "output": "B"
+    },
+    {
+      "input": "3\nR R\nG B\nR B",
+      "output": "draw"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "3\nR G\nG G\nB R",
+      "expected": "A",
+      "hidden": false
+    },
+    {
+      "input": "2\nG R\nB G",
+      "expected": "B",
+      "hidden": false
+    },
+    {
+      "input": "3\nR R\nG B\nR B",
+      "expected": "draw",
+      "hidden": false
+    },
+    {
+      "input": "1\nR R",
+      "expected": "draw",
+      "hidden": true
+    },
+    {
+      "input": "1\nR G",
+      "expected": "A",
+      "hidden": true
+    },
+    {
+      "input": "1\nG B",
+      "expected": "A",
+      "hidden": true
+    },
+    {
+      "input": "1\nB R",
+      "expected": "A",
+      "hidden": true
+    },
+    {
+      "input": "1\nG R",
+      "expected": "B",
+      "hidden": true
+    },
+    {
+      "input": "1\nB G",
+      "expected": "B",
+      "hidden": true
+    },
+    {
+      "input": "1\nR B",
+      "expected": "B",
+      "hidden": true
+    },
+    {
+      "input": "3\nR R\nG G\nB B",
+      "expected": "draw",
+      "hidden": true
+    },
+    {
+      "input": "2\nR G\nG R",
+      "expected": "draw",
+      "hidden": true
+    },
+    {
+      "input": "100\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B\nG B",
+      "expected": "A",
+      "hidden": true
+    },
+    {
+      "input": "4\nR G\nG B\nB R\nR B",
+      "expected": "A",
+      "hidden": true
+    },
+    {
+      "input": "4\nR B\nB B\nG R\nB R",
+      "expected": "B",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "import sys\ndata = sys.stdin.read().split()\nn = int(data[0])\nwins = {('R', 'G'), ('G', 'B'), ('B', 'R')}\nwin_a = win_b = 0\nfor i in range(n):\n    a, b = data[1 + 2*i:3 + 2*i]\n    if a == b:\n        continue\n    if (a, b) in wins:\n        win_a += 1\n    else:\n        win_b += 1\nprint(\"A\" if win_a > win_b else \"B\" if win_b > win_a else \"draw\")\n",
+  "knowledge_points": [
+    "逐轮遍历",
+    "三种循环关系",
+    "平局处理",
+    "双计数"
+  ],
+  "difficulty": 2,
+  "phase": "posttest"
+}

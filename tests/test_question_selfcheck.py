@@ -41,8 +41,11 @@ def _normalize(text: str) -> str:
 def _run(solution: str, stdin_text: str, workdir: Path):
     script = workdir / "solution.py"
     script.write_text(solution, encoding="utf-8")
+    # 显式 UTF-8：判题器（契约 §1）用 UTF-8 跑学生代码，这里必须与之一致；
+    # 否则在中文 Windows 上，含中文用例的输入会按 cp936 编码传给子进程而解码失败。
     return subprocess.run([sys.executable, str(script)], input=stdin_text + "\n",
-                          capture_output=True, text=True, timeout=TIMEOUT_SECONDS, cwd=workdir)
+                          capture_output=True, text=True, encoding="utf-8",
+                          timeout=TIMEOUT_SECONDS, cwd=workdir)
 
 
 @pytest.mark.parametrize("path", _question_files(), ids=lambda p: p.stem)

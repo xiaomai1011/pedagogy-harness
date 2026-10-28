@@ -1,0 +1,54 @@
+{
+  "id": "P002",
+  "title": "回文判断与反转",
+  "statement": "【题目描述】\n给出一个字符串，判断它是不是**回文**（正着读和倒着读完全一样），并输出它**反转后**的结果。\n\n**区分大小写**，空格也算字符串内容。\n\n【输入格式】\n一行字符串（可能包含空格），长度不超过 100。\n\n【输出格式】\n第一行输出 YES 或 NO（是回文输出 YES，否则输出 NO）。\n\n第二行输出反转后的字符串。\n\n【说明/提示】\n- **数据范围**：1 ≤ |s| ≤ 100。\n- 比较时区分大小写，空格按普通字符参与比较；不应先转为同一大小写或删除空格。",
+  "examples": [
+    {
+      "input": "hello",
+      "output": "NO\nolleh"
+    },
+    {
+      "input": "abcba",
+      "output": "YES\nabcba"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "hello",
+      "expected": "NO\nolleh",
+      "hidden": false
+    },
+    {
+      "input": "abcba",
+      "expected": "YES\nabcba",
+      "hidden": false
+    },
+    {
+      "input": "a",
+      "expected": "YES\na",
+      "hidden": true
+    },
+    {
+      "input": "Aa",
+      "expected": "NO\naA",
+      "hidden": true
+    },
+    {
+      "input": "a a",
+      "expected": "YES\na a",
+      "hidden": true
+    },
+    {
+      "input": "ab",
+      "expected": "NO\nba",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "s = input()\n\nprint(\"YES\" if s == s[::-1] else \"NO\")\nprint(s[::-1])\n",
+  "knowledge_points": [
+    "字符串",
+    "切片"
+  ],
+  "difficulty": 1,
+  "phase": "practice"
+}

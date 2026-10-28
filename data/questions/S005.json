@@ -1,0 +1,104 @@
+{
+  "id": "S005",
+  "title": "提取标记区间求和",
+  "statement": "【题目描述】\n读入 n 个整数。从 6 开始到其后第一个 7 结束构成一个标记区间，两个端点也属于该区间。求所有区间内部整数的总和，但两个端点不计入。可以有多个区间，也可以没有区间。区间外的 7 是普通数据，不属于待求和部分，因此不计入。\n\n【输入格式】\n第一行一个整数 n。若 n>0，第二行有 n 个整数；若 n=0，没有第二行。\n\n【输出格式】\n输出一行一个整数，表示所求总和。\n\n【说明/提示】\n0≤n≤100；每个整数在 -1000 到 1000 之间（含端点）。保证每个 6 都有对应的结束值 7，区间内部不出现 6，区间不嵌套、不重叠。区间内第一个 7 即为结束端点。没有需累加的整数时输出 0。\n\n设计限额：2 秒、256 MB。",
+  "examples": [
+    {
+      "input": "5\n3 6 5 7 2",
+      "output": "5"
+    },
+    {
+      "input": "7\n7 4 6 7 6 -2 7",
+      "output": "-2"
+    },
+    {
+      "input": "6\n6 1 7 6 3 7",
+      "output": "4"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "5\n3 6 5 7 2",
+      "expected": "5",
+      "hidden": false
+    },
+    {
+      "input": "7\n7 4 6 7 6 -2 7",
+      "expected": "-2",
+      "hidden": false
+    },
+    {
+      "input": "6\n6 1 7 6 3 7",
+      "expected": "4",
+      "hidden": false
+    },
+    {
+      "input": "0",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "2\n6 7",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "1\n7",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "3\n99 -2 0",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "4\n6 -1000 1000 7",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "4\n6 2 7 5",
+      "expected": "2",
+      "hidden": true
+    },
+    {
+      "input": "4\n4 6 3 7",
+      "expected": "3",
+      "hidden": true
+    },
+    {
+      "input": "4\n6 7 6 7",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "6\n6 -4 7 6 2 7",
+      "expected": "-2",
+      "hidden": true
+    },
+    {
+      "input": "5\n7 6 1 7 7",
+      "expected": "1",
+      "hidden": true
+    },
+    {
+      "input": "100\n6 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 7",
+      "expected": "98",
+      "hidden": true
+    },
+    {
+      "input": "8\n1 2 3 6 4 7 7 5",
+      "expected": "4",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "import sys\ndata = list(map(int, sys.stdin.buffer.read().split()))\nactive = False\ntotal = 0\nfor x in data[1:]:\n    if x == 6:\n        active = True\n    elif active and x == 7:\n        active = False\n    elif active:\n        total += x\nprint(total)\n",
+  "knowledge_points": [
+    "遍历",
+    "单布尔状态",
+    "条件累加"
+  ],
+  "difficulty": 2,
+  "phase": "posttest"
+}

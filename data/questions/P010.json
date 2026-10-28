@@ -1,0 +1,54 @@
+{
+  "id": "P010",
+  "title": "单词计数",
+  "statement": "【题目描述】\n给出一个英文句子：单词由字母组成，单词之间用**一个或多个空格**隔开，句子的首尾也可能有空格。\n\n输出这句话里**有几个单词**。\n\n【输入格式】\n一行字符串（可能全为空格），长度不超过 100。\n\n【输出格式】\n一行一个整数。\n\n【说明/提示】\n- **数据范围**：0 ≤ |s| ≤ 100（允许全为空格）。\n- 连续多个空格、首尾空格都不产生空单词。",
+  "examples": [
+    {
+      "input": "hello world",
+      "output": "2"
+    },
+    {
+      "input": "python is fun",
+      "output": "3"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "hello world",
+      "expected": "2",
+      "hidden": false
+    },
+    {
+      "input": "python is fun",
+      "expected": "3",
+      "hidden": false
+    },
+    {
+      "input": "   ",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": " a  b ",
+      "expected": "2",
+      "hidden": true
+    },
+    {
+      "input": "single",
+      "expected": "1",
+      "hidden": true
+    },
+    {
+      "input": "a b c d",
+      "expected": "4",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "s = input()\nprint(len(s.split()))\n",
+  "knowledge_points": [
+    "字符串",
+    "split"
+  ],
+  "difficulty": 1,
+  "phase": "practice"
+}

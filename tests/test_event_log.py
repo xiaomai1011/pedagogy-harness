@@ -403,8 +403,12 @@ def test_phase_disabled_response_hides_diagnostics_everywhere(monkeypatch):
     """规则分类**确实命中**（内部记录保留），但**响应里任何位置**都不得出现该诊断。"""
     monkeypatch.setattr(pipeline_mod, "judge", _judge_fail)
     monkeypatch.setattr(llm_mod, "llm", _stub_llm())
-    question = dict(pipeline_mod.load_question("P001"))
-    question["phase"] = "pretest"
+    # 本用例验证的是"诊断不外泄"，与题库内容无关：用题目字典自带的知识点，
+    # 避免把断言绑死在某道题的文案上（题库换版时不该连测试一起失效）。
+    question = {"id": "P001", "title": "测试题", "statement": "读入一个整数并输出。",
+                "examples": [{"input": "1", "output": "1"}], "test_cases": [],
+                "reference_solution": "print(input())\n",
+                "knowledge_points": ["变量与赋值"], "difficulty": 1, "phase": "pretest"}
     monkeypatch.setattr(pipeline_mod, "load_question", lambda qid: dict(question))
 
     pid = "T_EV_LEAK_PRE_1"

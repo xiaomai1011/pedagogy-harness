@@ -1,0 +1,63 @@
+{
+  "id": "P003",
+  "title": "出现次数最多的数",
+  "statement": "【题目描述】\n给出 n 个整数（每个数在 0 到 100 之间），输出**出现次数最多**的那个数。\n\n如果有多个数出现次数相同，输出其中**最小**的那个。\n\n【输入格式】\n第一行一个整数 n。\n\n第二行 n 个整数，用空格分隔。\n\n【输出格式】\n一行一个整数。\n\n【说明/提示】\n- **数据范围**：1 ≤ n ≤ 200，0 ≤ a_i ≤ 100。\n- 样例 2 解释：1、2、3 都出现了 2 次，取其中最小的 1。",
+  "examples": [
+    {
+      "input": "7\n1 2 2 3 3 3 1",
+      "output": "3"
+    },
+    {
+      "input": "6\n2 2 1 1 3 3",
+      "output": "1"
+    },
+    {
+      "input": "5\n4 4 4 4 4",
+      "output": "4"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "7\n1 2 2 3 3 3 1",
+      "expected": "3",
+      "hidden": false
+    },
+    {
+      "input": "6\n2 2 1 1 3 3",
+      "expected": "1",
+      "hidden": false
+    },
+    {
+      "input": "5\n4 4 4 4 4",
+      "expected": "4",
+      "hidden": false
+    },
+    {
+      "input": "1\n9",
+      "expected": "9",
+      "hidden": true
+    },
+    {
+      "input": "8\n0 5 5 0 0 5 0 5",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "3\n100 0 100",
+      "expected": "100",
+      "hidden": true
+    },
+    {
+      "input": "6\n100 100 0 0 0 100",
+      "expected": "0",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "n = int(input())\na = list(map(int, input().split()))\n\ncnt = [0] * 101\nfor x in a:\n    cnt[x] += 1\n\nbest = 0\nfor x in range(101):\n    if cnt[x] > cnt[best]:\n        best = x\n\nprint(best)\n",
+  "knowledge_points": [
+    "列表",
+    "计数"
+  ],
+  "difficulty": 2,
+  "phase": "practice"
+}

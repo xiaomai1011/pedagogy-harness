@@ -1,0 +1,73 @@
+{
+  "id": "P012",
+  "title": "数字反转",
+  "statement": "【题目描述】\n读入一个整数（可能是负数），把它的**数字部分**倒过来输出。\n\n- 倒过来后，**开头的 0 要去掉**；\n- 如果是负数，**负号保留在最前面**。\n\n【输入格式】\n一行一个整数 x。\n\n【输出格式】\n一行一个整数。\n\n【说明/提示】\n- **数据范围**：|x| ≤ 10^9。\n- 样例 2 解释：120 倒过来是 021，去掉开头的 0 得 21，再加上负号。",
+  "examples": [
+    {
+      "input": "123",
+      "output": "321"
+    },
+    {
+      "input": "-120",
+      "output": "-21"
+    },
+    {
+      "input": "0",
+      "output": "0"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "123",
+      "expected": "321",
+      "hidden": false
+    },
+    {
+      "input": "-120",
+      "expected": "-21",
+      "hidden": false
+    },
+    {
+      "input": "0",
+      "expected": "0",
+      "hidden": false
+    },
+    {
+      "input": "1000",
+      "expected": "1",
+      "hidden": true
+    },
+    {
+      "input": "-5",
+      "expected": "-5",
+      "hidden": true
+    },
+    {
+      "input": "100",
+      "expected": "1",
+      "hidden": true
+    },
+    {
+      "input": "987654321",
+      "expected": "123456789",
+      "hidden": true
+    },
+    {
+      "input": "-1000000",
+      "expected": "-1",
+      "hidden": true
+    },
+    {
+      "input": "1000000000",
+      "expected": "1",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "s = input()\n\nsign = \"\"\nif s[0] == \"-\":\n    sign = \"-\"\n    s = s[1:]\n\nbody = s[::-1].lstrip(\"0\")\nif body == \"\":\n    body = \"0\"\n\nprint(sign + body)\n",
+  "knowledge_points": [
+    "字符串",
+    "边界处理"
+  ],
+  "difficulty": 1,
+  "phase": "practice"
+}

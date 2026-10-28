@@ -1,0 +1,68 @@
+{
+  "id": "P013",
+  "title": "闰年判断",
+  "statement": "【题目描述】\n闰年的规则：\n\n- 能被 400 整除 → **是**闰年；\n- 能被 100 整除但不能被 400 整除 → **不是**闰年；\n- 能被 4 整除但不能被 100 整除 → **是**闰年；\n- 其余 → **不是**闰年。\n\n读入一个年份，输出 YES 或 NO。\n\n【输入格式】\n一行一个整数 y。\n\n【输出格式】\n一行 YES 或 NO。\n\n【说明/提示】\n- **数据范围**：1900 ≤ y ≤ 3000。",
+  "examples": [
+    {
+      "input": "2024",
+      "output": "YES"
+    },
+    {
+      "input": "1900",
+      "output": "NO"
+    },
+    {
+      "input": "2000",
+      "output": "YES"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "2024",
+      "expected": "YES",
+      "hidden": false
+    },
+    {
+      "input": "1900",
+      "expected": "NO",
+      "hidden": false
+    },
+    {
+      "input": "2000",
+      "expected": "YES",
+      "hidden": false
+    },
+    {
+      "input": "2023",
+      "expected": "NO",
+      "hidden": true
+    },
+    {
+      "input": "2100",
+      "expected": "NO",
+      "hidden": true
+    },
+    {
+      "input": "2400",
+      "expected": "YES",
+      "hidden": true
+    },
+    {
+      "input": "1996",
+      "expected": "YES",
+      "hidden": true
+    },
+    {
+      "input": "3000",
+      "expected": "NO",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "def is_leap(y):\n    if y % 400 == 0:\n        return True\n    if y % 100 == 0:\n        return False\n    if y % 4 == 0:\n        return True\n    return False\n\ny = int(input())\nprint(\"YES\" if is_leap(y) else \"NO\")\n",
+  "knowledge_points": [
+    "函数",
+    "逻辑组合（与 / 或）"
+  ],
+  "difficulty": 1,
+  "phase": "practice"
+}

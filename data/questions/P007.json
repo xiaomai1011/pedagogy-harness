@@ -1,0 +1,63 @@
+{
+  "id": "P007",
+  "title": "数一数数字字符",
+  "statement": "【题目描述】\n给出一个字符串，统计其中**数字字符**（半角 0—9）的个数。\n\n字母、汉字、空格都不算。\n\n【输入格式】\n一行字符串（可能包含空格，可能全为空格），长度不超过 100。\n\n【输出格式】\n一行一个整数。\n\n【说明/提示】\n- **数据范围**：0 ≤ |s| ≤ 100（允许全为空格）。\n- 只数英文半角数字 0—9。\n- 样例 2 中的数字是 2 0 2 6 1 0，共 6 个。",
+  "examples": [
+    {
+      "input": "abc123",
+      "output": "3"
+    },
+    {
+      "input": "2026年10月",
+      "output": "6"
+    },
+    {
+      "input": "a1b2c3",
+      "output": "3"
+    }
+  ],
+  "test_cases": [
+    {
+      "input": "abc123",
+      "expected": "3",
+      "hidden": false
+    },
+    {
+      "input": "2026年10月",
+      "expected": "6",
+      "hidden": false
+    },
+    {
+      "input": "a1b2c3",
+      "expected": "3",
+      "hidden": false
+    },
+    {
+      "input": "abc",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "a b c",
+      "expected": "0",
+      "hidden": true
+    },
+    {
+      "input": "A1B2",
+      "expected": "2",
+      "hidden": true
+    },
+    {
+      "input": "0",
+      "expected": "1",
+      "hidden": true
+    }
+  ],
+  "reference_solution": "s = input()\n\ncnt = 0\nfor ch in s:\n    if '0' <= ch <= '9':\n        cnt += 1\n\nprint(cnt)\n",
+  "knowledge_points": [
+    "字符串遍历",
+    "字符判断"
+  ],
+  "difficulty": 1,
+  "phase": "practice"
+}
