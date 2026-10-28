@@ -60,7 +60,7 @@
       overflow: auto; padding: 16px 18px 28px; }
     .sidebar h2.q-title { font-size: 19px; margin: 12px 0 4px; line-height: 1.5; }
     .sidebar .q-meta { color: var(--fg-dim); font-size: 13px; margin-bottom: 12px; }
-    .sidebar .q-stmt { line-height: 1.9; font-size: 15px; white-space: pre-wrap; margin: 8px 0 16px; }
+    .sidebar .q-stmt { line-height: 1.9; font-size: 16px; white-space: pre-wrap; margin: 8px 0 16px; }
     /* 题目列表可收起：默认限高滚动，收起后整栏高度都留给题目说明 */
     .sb-head { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; }
     .sb-head h3.sec { margin: 0; }
@@ -102,7 +102,7 @@
     #editor { position: absolute; inset: 0; }
     #code-ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none;
       background: #1e1e1e; color: #d4d4d4; border: 0; padding: 14px;
-      font-family: Consolas, Menlo, monospace; font-size: 15px; line-height: 1.7; }
+      font-family: Consolas, Menlo, monospace; font-size: 16px; line-height: 1.7; }
     /* 反馈变长时，拖这里就能给下方腾地方 */
     .splitter { flex: 0 0 7px; cursor: row-resize; background: var(--bg-hard);
       border-bottom: 1px solid var(--line); }
@@ -134,7 +134,7 @@
     .result-head.judge .dot { background: var(--judge); }
     .result-head.teach .dot { background: var(--teach); }
     .result-head .sub { font-weight: 400; color: var(--fg-dim); font-size: 13px; }
-    .result-body { padding: 14px 16px; overflow: auto; flex: 1; line-height: 1.8; font-size: 15px; }
+    .result-body { padding: 14px 16px; overflow: auto; flex: 1; line-height: 1.8; font-size: 16px; }
     .result-body.mono { font-family: Consolas, Menlo, monospace; font-size: 14px; white-space: pre-wrap; }
     .case { border-left: 2px solid var(--line); padding-left: 12px; margin: 12px 0; line-height: 1.8; }
     .case .muted { white-space: pre-wrap; }
@@ -261,6 +261,7 @@
   const state = {
     qid: null, question: null, editorReady: false, usingMonaco: false,
     debug: false,           // 学生模式默认**收起**开发调试信息
+  debugAllowed: true,     // 由 /api/status 决定；实验模式服务端会设为 false
     judgeStub: false,       // 服务端探测：判题器是否仍为桩
     isolationReady: true,   // 服务端探测：安全执行适配器是否已登记（未登记 ⇒ 提交会被拒绝）
     isolationNote: "",      // 未就绪时服务端给出的说明
@@ -331,7 +332,12 @@
       if (!dragging) return;
       const rect = work.getBoundingClientRect();
       const pct = ((e.clientY - rect.top) / rect.height) * 100;
-      work.style.setProperty("--edit-h", Math.min(75, Math.max(20, pct)) + "%");
+      // 上下都有最小高度：编辑器 ≥88px、反馈区（含操作条）≥110px，避免拖到看不见
+      const minPct = (88 / rect.height) * 100;
+      const maxPct = 100 - (110 / rect.height) * 100;
+      const lo = Math.min(75, Math.max(20, minPct));
+      const hi = Math.max(lo, Math.min(75, maxPct));
+      work.style.setProperty("--edit-h", Math.min(hi, Math.max(lo, pct)) + "%");
     });
     const stop = (e) => {
       if (!dragging) return;
@@ -452,11 +458,17 @@
       state.judgeStub = s.judge === "stub";
       state.isolationReady = s.isolation === "ready";
       state.isolationNote = s.isolation_note || "";
+      // 实验模式服务端不下发组件轨迹，界面也不显示入口（权限在服务端，不只是藏按钮）
+      state.debugAllowed = s.debug !== false;
     } catch (e) {
       state.judgeStub = false;
       state.isolationReady = true;   // 探测失败不误报：真正的拒绝文案由提交接口返回
       state.isolationNote = "";
+      state.debugAllowed = false;
     }
+    if (!state.debugAllowed) { state.debug = false; }
+    $("btn-debug").style.display = state.debugAllowed ? "" : "none";
+    applyDebug();
     refreshBanner();
   }
 

@@ -30,7 +30,7 @@ from app.questions import list_questions, load_question
 
 app = FastAPI(title="pedagogy-harness")
 app.include_router(admin.router)
-APP_VERSION = "0.5.0-boundary"
+APP_VERSION = "0.5.1-ui"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 VENDOR_DIR = WEB_DIR / "vendor"
 
@@ -180,6 +180,15 @@ class HintRequest(BaseModel):
     question_id: str
     code: str = ""              # 当前编辑器里的代码，供大模型看到"学生卡在哪"
     hint_request_id: str = ""   # 同一次点击的幂等键（刷新/重试复用，服务端回放不升级）
+
+
+def _debug_allowed() -> bool:
+    """开发调试信息是否允许下发。
+
+    实验/正式模式（访问码强制或 `PH_EXPERIMENT_MODE=1`）一律关闭：
+    界面上隐藏「调试」按钮只是表面，**服务端不返回组件轨迹**才算真正关掉。
+    """
+    return not _llm.experiment_mode()
 
 
 def _claims(x_access_code: str | None) -> access.Claims | None:
@@ -332,6 +341,7 @@ def api_status() -> dict:
             "note": "当前为模拟判题，结果不代表真实代码执行。" if stub else "",
             "isolation_note": _ISOLATION_NOTES[state],
             "model": "configured" if _llm.is_configured() else "not_configured",
+            "debug": _debug_allowed(),
             "version": APP_VERSION}
 
 
@@ -421,13 +431,17 @@ def api_submit(req: SubmitRequest, request: Request = None,
         _require_model_ready()
     _enter_single_lane()
     try:
-        return handle_submission(
+        out = handle_submission(
             participant_id=participant_id,
             question_id=req.question_id,
             code=req.code,
             config=_config(req.group),
             request_hint=req.request_hint,
         )
+        if not _debug_allowed():
+            # 正式/实验模式下不把组件轨迹发给浏览器：隐藏按钮只是界面，数据也要在服务端去掉
+            out.pop("log", None)
+        return out
     except isolation.IsolationUnavailable as exc:
         return _isolation_refusal(exc, hint_requested=req.request_hint)
     finally:
