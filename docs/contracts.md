@@ -439,6 +439,15 @@ CREATE INDEX IF NOT EXISTS idx_event_type_ts    ON event_log(event_type, ts_star
   **不是** `event_log.reason_code` 的取值 —— 两者**不得混用**，`cleanup_failed` 现阶段
   **不得**写进任何 `event_log.reason_code`。
 
+**2026-10-28 新增 `detail_code: agent_rejected`（VM agent 协议 v1，按本节「扩展须登记」办理）**：
+
+- **语义**：VM 判题 agent **可达但明确拒绝**本次请求（token 校验失败、协议版本不匹配、
+  请求体超出限制、执行能力未启用）。它与 `agent_unreachable`（连不上）分开记，
+  运维据此区分「网络/VM 掉了」与「被拒」。
+- **落点**：只写 `isolation_run_log.detail_code`；`event_log.reason_code` 仍是
+  `isolation_unavailable`，**不新增 `reason_code`**。
+- 协议见 `docs/G4_VM_Agent_最小协议.md`；实现见 `app/harness/vm_agent_adapter.py`。
+
 **宿主侧诊断码（`record_write_failed`，2026-10-18 登记）**：
 
 - **用途**：「尽力而为路径」失败时**必须可见、但不得改写判题结果**的降级标记。

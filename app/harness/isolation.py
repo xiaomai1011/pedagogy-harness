@@ -52,6 +52,8 @@ DETAIL_CODES = frozenset({
     "hyperv_disabled",
     "vm_missing",
     "agent_unreachable",
+    #: agent 可达但**明确拒绝**（token 错、协议不匹配、请求超出限制）
+    "agent_rejected",
     "channel_unavailable",
     "scope_not_ready",
     "constraint_not_applied",

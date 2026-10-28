@@ -1,0 +1,23 @@
+[Unit]
+Description=ph-judge-agent（VM 内判题代理，阶段 2：健康检查与握手）
+Documentation=file:/opt/ph-judge-agent/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 单独的系统账户，无 sudo、无 shell 登录；token 只对该账户与 root 可读
+User=phjudge
+Group=phjudge
+ExecStart=/usr/bin/python3 /opt/ph-judge-agent/ph_judge_agent.py --bind 192.168.200.10 --port 9443 --token-file /etc/ph-judge-agent/token
+Restart=on-failure
+RestartSec=2
+# 阶段 2 的加固基线；执行能力实现后必须重新评审（届时需要 cgroup 写权限）
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
