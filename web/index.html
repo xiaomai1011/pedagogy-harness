@@ -236,7 +236,7 @@
 <script src="/vendor/monaco/vs/loader.js"></script>
 <script>
   // ---------- 状态 ----------
-  const SAMPLE = "a, b = map(int, input().split())\nprint(a + b)\n";
+  // 不预填示例代码：进入题目时编辑区为空，由学生自己写答案
   const state = {
     qid: null, question: null, editorReady: false, usingMonaco: false,
     debug: false,           // 学生模式默认**收起**开发调试信息
@@ -270,7 +270,7 @@
     if (state.usingMonaco) return;
     if (!state.editorReady) console.warn("Monaco 未就绪，退化为纯文本框：", reason);
     const ta = document.createElement("textarea");
-    ta.id = "code-ta"; ta.value = SAMPLE;
+    ta.id = "code-ta"; ta.value = ""; ta.placeholder = "在这里写你的 Python 3 代码";
     $("editor").replaceWith(ta);
     state.usingMonaco = false;
     setReady();
@@ -285,7 +285,7 @@
       require(["vs/editor/editor.main"], function () {
         if (state.editorReady) return;
         monacoEditor = monaco.editor.create($("editor"), {
-          value: SAMPLE, language: "python", theme: "vs-dark",
+          value: "", language: "python", theme: "vs-dark",
           automaticLayout: true, minimap: { enabled: false }, fontSize: 15,
           lineHeight: 23,
           // 只做语法着色：关掉补全/触发器，避免把 API 用法喂给学生（与"不给答案"主张一致）
