@@ -93,3 +93,21 @@ def test_pure_hint_does_not_touch_submissions_or_memory(monkeypatch):
                             (pid,)).fetchone()["n"] == subs
         assert conn.execute("SELECT COUNT(*) n FROM error_memory WHERE participant_id=?",
                             (pid,)).fetchone()["n"] == mem
+
+def test_replay_bound_to_participant_and_code(monkeypatch):
+    """回放必须绑定参与者与代码：别人拿同一个请求号读不到缓存；改了代码也不能回放旧提示。"""
+    monkeypatch.setattr(llm_mod, "llm", lambda system, user: "提示 A")
+    first = handle_hint_request(participant_id="RP-A", question_id="P001", code="print(1)",
+                                config=PRESETS["exp"], hint_request_id="rid-1", hint_batch="B")
+    assert first["hint_level"] == 1
+
+    # 另一个参与者拿同一个请求号：不能拿到别人的缓存
+    other = handle_hint_request(participant_id="RP-B", question_id="P001", code="print(1)",
+                                config=PRESETS["exp"], hint_request_id="rid-1", hint_batch="B")
+    assert not other.get("replayed")
+    assert other["hint_level"] == 1  # 自己的首次提示，仍从 L1 起
+
+    # 同一参与者改了代码却复用旧请求号：不能把旧提示冒充成新结果
+    changed = handle_hint_request(participant_id="RP-A", question_id="P001", code="print(999)",
+                                  config=PRESETS["exp"], hint_request_id="rid-1", hint_batch="B")
+    assert not changed.get("replayed")

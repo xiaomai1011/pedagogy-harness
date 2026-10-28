@@ -124,3 +124,18 @@ def test_question_list_filtered_by_claimed_phases(monkeypatch, secret):
 
     with pytest.raises(Exception):
         main.api_question("S001", x_access_code=code)
+
+def test_wrong_batch_rejected(monkeypatch, secret):
+    """凭证里的 batch 必须与服务端当前批次比对，不能只签着好看。"""
+    from fastapi import HTTPException
+
+    from app import main
+
+    monkeypatch.setenv("PH_REQUIRE_ACCESS_CODE", "1")
+    monkeypatch.setenv("PH_EXPERIMENT_BATCH", "B-CURRENT")
+    code = access.issue_code("S001", batch="B-OLD", phases=("practice",), ttl_seconds=600)
+    with pytest.raises(HTTPException) as exc:
+        main.api_submit(main.SubmitRequest(participant_id="S001", question_id="P001", code=""),
+                        x_access_code=code)
+    assert exc.value.status_code == 403
+    assert exc.value.detail["status"] == "batch_mismatch"

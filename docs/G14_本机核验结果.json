@@ -1,0 +1,95 @@
+{
+  "base": "http://127.0.0.1:8010",
+  "db": "data\\experiment_acceptance_20261028.sqlite",
+  "batch": "ACCEPT-20261028",
+  "checked_at": "2026-10-28T10:48:30+0800",
+  "checks": [
+    {
+      "check": "access_no_code",
+      "ok": true,
+      "detail": "status=403 code=missing_code"
+    },
+    {
+      "check": "access_forged_code",
+      "ok": true,
+      "detail": "status=403 code=bad_signature"
+    },
+    {
+      "check": "access_expired_code",
+      "ok": true,
+      "detail": "status=403 code=expired_code"
+    },
+    {
+      "check": "access_identity_mismatch",
+      "ok": true,
+      "detail": "status=403 code=identity_mismatch"
+    },
+    {
+      "check": "access_wrong_batch",
+      "ok": true,
+      "detail": "status=403 status_field=batch_mismatch"
+    },
+    {
+      "check": "phase_not_allowed",
+      "ok": true,
+      "detail": "status=403 phase=practice"
+    },
+    {
+      "check": "pretest_hint_disabled",
+      "ok": true,
+      "detail": "status=200 field=phase_disabled"
+    },
+    {
+      "check": "pretest_hint_no_model_no_submission",
+      "ok": true,
+      "detail": "events 0->1 submissions 0->0 model_ms=None"
+    },
+    {
+      "check": "practice_hint_level1",
+      "ok": true,
+      "detail": "status=200 level=1 source=harness"
+    },
+    {
+      "check": "hint_model_ms_recorded",
+      "ok": true,
+      "detail": "model_ms=3618"
+    },
+    {
+      "check": "duplicate_request_replays",
+      "ok": true,
+      "detail": "status=200 replayed=True level=1"
+    },
+    {
+      "check": "duplicate_request_no_extra_event",
+      "ok": true,
+      "detail": "events 3->3"
+    },
+    {
+      "check": "replay_rejected_when_code_changed",
+      "ok": true,
+      "detail": "status=200 replayed=None level=2"
+    },
+    {
+      "check": "replay_isolated_across_participants",
+      "ok": true,
+      "detail": "status=200 replayed=None level=1"
+    },
+    {
+      "check": "judge_pass_via_vm",
+      "ok": true,
+      "detail": "status=200 judge=pass error_type=none"
+    },
+    {
+      "check": "lock_released_after_bad_request",
+      "ok": true,
+      "detail": "first=200 second=200"
+    },
+    {
+      "check": "busy_rejected",
+      "ok": true,
+      "detail": "status=429 field=busy"
+    }
+  ],
+  "passed": 17,
+  "total": 17
+}

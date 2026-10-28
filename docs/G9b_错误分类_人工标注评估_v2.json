@@ -5,8 +5,11 @@
     "correct": 24,
     "wrong": 1,
     "unclassified": 2,
-    "accuracy": 0.889,
-    "denominator": "全部样本（含未分类）：正确数 / 总样本数",
+    "error_class_accuracy": 0.96,
+    "error_class_denominator": "错误样例 25 条（未分类计入分母）",
+    "no_error_false_positive_rate": 0.0,
+    "overall_decision_accuracy": 0.963,
+    "accuracy_mixed_denominator_note": "上一版把 24/27 当作准确率是混用分母：错误分类准确率应为 24/25，正常样例单列误报率 0/2，整体判定正确率 26/27。",
     "by_class": {
       "语法": {
         "n": 5,

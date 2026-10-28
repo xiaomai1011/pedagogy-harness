@@ -188,13 +188,20 @@ def _claims(x_access_code: str | None) -> access.Claims | None:
     if not access.access_required() and not x_access_code:
         return None
     try:
-        return access.verify_code(x_access_code)
+        claims = access.verify_code(x_access_code)
+        access.ensure_batch(claims)
+        return claims
     except access.AccessNotConfigured:
         raise HTTPException(status_code=503, detail={
             "status": "access_not_configured",
             "message": "实验访问码未配置：服务端缺少签名密钥，本次请求未执行。",
         })
     except access.AccessError as exc:
+        if exc.code == "batch_mismatch":
+            raise HTTPException(status_code=403, detail={
+                "status": "batch_mismatch",
+                "message": "访问码不属于当前实验批次，本次请求未执行。",
+            })
         raise HTTPException(status_code=403, detail={
             "status": "access_denied", "code": exc.code,
             "message": "实验访问码无效或已过期，本次请求未执行。",
@@ -352,8 +359,10 @@ def api_hint(req: HintRequest,
             code=req.code,
             config=PRESETS["exp"],
             hint_request_id=req.hint_request_id,
+            hint_batch=(claims.batch if claims is not None else ""),
         )
     except isolation.IsolationUnavailable as exc:
         return _isolation_refusal(exc, hint_requested=True)
     finally:
         _SINGLE_LANE.release()
+

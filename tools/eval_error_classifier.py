@@ -106,14 +106,20 @@ def main() -> int:
     no_error = [r for r in rows if r["human_label"] == "无错误"]
     no_error_fp = sum(1 for r in no_error if r["predicted"] not in ("未分类", "无错误"))
 
+    err = [r for r in rows if r["human_label"] != "无错误"]
+    err_correct = sum(1 for r in err if r["predicted"] == r["human_label"])
+    err_unclassified = sum(1 for r in err if r["predicted"] == "未分类")
     summary = {
         "dataset_version": DATASET_VERSION,
         "total": total,
         "correct": correct,
         "wrong": total - correct - unclassified,
         "unclassified": unclassified,
-        "accuracy": round(correct / total, 3),
-        "denominator": "全部样本（含未分类）：正确数 / 总样本数",
+        "error_class_accuracy": round(err_correct / len(err), 3),
+        "error_class_denominator": f"错误样例 {len(err)} 条（未分类计入分母）",
+        "no_error_false_positive_rate": round(no_error_fp / len(no_error), 3) if no_error else None,
+        "overall_decision_accuracy": round((err_correct + len(no_error) - no_error_fp) / total, 3),
+        "accuracy_mixed_denominator_note": "上一版把 24/27 当作准确率是混用分母：错误分类准确率应为 24/25，正常样例单列误报率 0/2，整体判定正确率 26/27。",
         "by_class": by_class,
         "no_error": {
             "n": len(no_error),
@@ -145,5 +151,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 

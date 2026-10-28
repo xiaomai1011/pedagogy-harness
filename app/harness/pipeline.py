@@ -15,6 +15,7 @@
 主干（本文件）只按 `registry.ordered()` 遍历组件，**不认识任何具体组件**。
 """
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -321,7 +322,7 @@ def _student_log(payload: dict | None, *, phase_disabled: bool) -> dict | None:
 
 def _pipeline(*, participant_id: str, question_id: str, question: dict, code: str,
               config: HarnessConfig, request_hint: bool, entry: str,
-              hint_request_id: str = ""):
+              hint_request_id: str = "", hint_batch: str = ""):
     """两种入口共用的四步序列。返回 `(ctx, result, meta)`；前后测纯提示时 ctx／result 为 None。"""
     ts, request_id = _now(), uuid.uuid4().hex
     phase = _phase_of(question)
@@ -332,7 +333,11 @@ def _pipeline(*, participant_id: str, question_id: str, question: dict, code: st
     # 不升级、不判题、不调模型，直接回放上次结果（契约 §5 提示阶梯修订）。
     if entry == "hint" and hint_request_id:
         st = db.get_hint_state(participant_id, question_id)
-        if st["last_request_id"] == hint_request_id and st["last_response"]:
+        # 回放绑定：请求号 + 参与者/题目（主键）+ 批次 + 代码内容都必须一致，
+        # 否则换了代码却复用旧请求号会把旧提示冒充成新结果。
+        want_hash = hashlib.sha256((hint_batch + "\n" + code).encode("utf-8")).hexdigest()
+        if (st["last_request_id"] == hint_request_id and st["last_response"]
+                and st.get("last_code_hash", "") == want_hash):
             try:
                 cached = json.loads(st["last_response"])
             except ValueError:
@@ -529,13 +534,14 @@ def _hint_cache(resp: dict) -> dict:
 
 
 def _remember_hint(participant_id: str, question_id: str, resp: dict, *,
-                   hint_request_id: str) -> None:
+                   hint_request_id: str, code: str = "", hint_batch: str = "") -> None:
     db.save_hint_state(
         participant_id, question_id,
         unlocked_level=int(resp.get("unlocked_level") or 0),
         displayed_level=int(resp.get("hint_level") or 0),
         unlocked_at_last_hint=int(resp.get("unlocked_level") or 0),
         last_request_id=hint_request_id,
+        last_code_hash=hashlib.sha256((hint_batch + "\n" + code).encode("utf-8")).hexdigest(),
         last_response=json.dumps(_hint_cache(resp), ensure_ascii=False),
         ts=_now(),
     )
@@ -550,12 +556,13 @@ def handle_submission(*, participant_id: str, question_id: str, code: str,
         code=code, config=config, request_hint=request_hint, entry="submit")
     resp = _response(ctx, result, log_payload=meta.get("log"), meta=meta)
     if request_hint and meta.get("teaching_on"):
-        _remember_hint(participant_id, question_id, resp, hint_request_id="")
+        _remember_hint(participant_id, question_id, resp, hint_request_id="", code=code)
     return resp
 
 
 def handle_hint_request(*, participant_id: str, question_id: str, code: str,
-                        config: HarnessConfig, hint_request_id: str = "") -> dict:
+                        config: HarnessConfig, hint_request_id: str = "",
+                        hint_batch: str = "") -> dict:
     """学生**只想看提示、代码没改**：同样走判题 ＋ 教学组件 ＋ 防泄校验。
 
     **不写 `submission_log`**（`log` 恒为 `None`），也**不产生 `teaching` 事件**（契约 §6.5）；
@@ -566,7 +573,7 @@ def handle_hint_request(*, participant_id: str, question_id: str, code: str,
     ctx, result, meta = _pipeline(
         participant_id=participant_id, question_id=question_id, question=question,
         code=code, config=config, request_hint=True, entry="hint",
-        hint_request_id=hint_request_id)
+        hint_request_id=hint_request_id, hint_batch=hint_batch)
     if meta.get("replayed"):
         cached = dict(meta.get("response") or {})
         cached.update({"hint_requested": 1, "replayed": True, "log": None})
@@ -575,5 +582,8 @@ def handle_hint_request(*, participant_id: str, question_id: str, code: str,
         return _disabled_response(hint_requested=True)
     resp = _response(ctx, result, log_payload=None, meta=meta)
     if meta.get("teaching_on"):
-        _remember_hint(participant_id, question_id, resp, hint_request_id=hint_request_id)
+        _remember_hint(participant_id, question_id, resp, hint_request_id=hint_request_id, code=code, hint_batch=hint_batch)
     return resp
+
+
+

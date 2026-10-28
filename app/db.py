@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS hint_state (
     displayed_level      INTEGER NOT NULL DEFAULT 0,
     unlocked_at_last_hint INTEGER NOT NULL DEFAULT 0,
     last_request_id      TEXT    NOT NULL DEFAULT '',
+    last_code_hash       TEXT    NOT NULL DEFAULT '',
     last_response        TEXT    NOT NULL DEFAULT '',
     updated_ts           TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (participant_id, question_id)
@@ -145,27 +146,28 @@ def get_hint_state(participant_id: str, question_id: str) -> dict:
     if row is None:
         return {"participant_id": participant_id, "question_id": question_id,
                 "unlocked_level": 0, "displayed_level": 0, "unlocked_at_last_hint": 0,
-                "last_request_id": "", "last_response": "", "updated_ts": ""}
+                "last_request_id": "", "last_code_hash": "", "last_response": "", "updated_ts": ""}
     return dict(row)
 
 
 def save_hint_state(participant_id: str, question_id: str, *, unlocked_level: int,
                     displayed_level: int, unlocked_at_last_hint: int,
-                    last_request_id: str, last_response: str, ts: str) -> None:
+                    last_request_id: str, last_response: str, ts: str, last_code_hash: str = '') -> None:
     with connect() as conn:
         conn.execute(
             """INSERT INTO hint_state (participant_id, question_id, unlocked_level,
-                   displayed_level, unlocked_at_last_hint, last_request_id, last_response, updated_ts)
-               VALUES (?,?,?,?,?,?,?,?)
+                   displayed_level, unlocked_at_last_hint, last_request_id, last_code_hash, last_response, updated_ts)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(participant_id, question_id) DO UPDATE SET
                    unlocked_level=excluded.unlocked_level,
                    displayed_level=excluded.displayed_level,
                    unlocked_at_last_hint=excluded.unlocked_at_last_hint,
                    last_request_id=excluded.last_request_id,
+                   last_code_hash=excluded.last_code_hash,
                    last_response=excluded.last_response,
                    updated_ts=excluded.updated_ts""",
             (participant_id, question_id, unlocked_level, displayed_level,
-             unlocked_at_last_hint, last_request_id, last_response, ts),
+             unlocked_at_last_hint, last_request_id, last_code_hash, last_response, ts),
         )
 
 _initialized = False
@@ -184,6 +186,10 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     if "model_ms" not in ev:
         # 历史行保持 NULL：**不回填伪造耗时**（契约 §6 修订）
         conn.execute("ALTER TABLE event_log ADD COLUMN model_ms INTEGER")
+    hs = {r["name"] for r in conn.execute("PRAGMA table_info(hint_state)").fetchall()}
+    if hs and "last_code_hash" not in hs:
+        # 旧库迁移：历史行留空 ⇒ 不能命中"同码回放"，只会走正常新请求
+        conn.execute("ALTER TABLE hint_state ADD COLUMN last_code_hash TEXT NOT NULL DEFAULT ''")
 
 
 def connect() -> sqlite3.Connection:
@@ -414,3 +420,4 @@ def get_isolation_runs(*, request_id: str | None = None, run_id: str | None = No
         return [dict(r) for r in conn.execute(sql, tuple(args)).fetchall()]
     finally:
         conn.close()
+

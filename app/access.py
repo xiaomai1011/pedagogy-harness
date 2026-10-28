@@ -1,4 +1,4 @@
-"""实验访问码（最小实现，2026-10-28）。
+﻿"""实验访问码（最小实现，2026-10-28）。
 
 目标（评阅口径）：**参与者身份由服务端从凭证确定，不信任请求体里自填的 ID**。
 - 凭证 = `v1.<payload_b64url>.<sig_b64url>`，签名 HMAC-SHA256；
@@ -124,3 +124,14 @@ def resolve_participant(body_participant_id: str, claims: Claims | None) -> str:
     if body_participant_id and body_participant_id != claims.participant_id:
         raise AccessError("identity_mismatch", "请求体参与者与访问码不一致")
     return claims.participant_id
+def current_batch() -> str:
+    """服务端当前实验批次（`PH_EXPERIMENT_BATCH`）。空字符串表示不校验批次。"""
+    return (os.environ.get("PH_EXPERIMENT_BATCH") or "").strip()
+
+
+def ensure_batch(claims: Claims) -> None:
+    """凭证里的批次必须与服务端当前批次一致；不一致直接拒绝（不是只签进凭证就算）。"""
+    want = current_batch()
+    if want and claims.batch != want:
+        raise AccessError("batch_mismatch", f"访问码批次为 {claims.batch}，当前实验批次为 {want}")
+
