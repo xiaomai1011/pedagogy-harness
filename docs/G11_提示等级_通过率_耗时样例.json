@@ -1,0 +1,37 @@
+{
+  "summary": {
+    "data_label": "预演数据（模拟，不计入真实学习效果）",
+    "db": "D:\\Downloads\\Trae-workspace\\pedagogy-harness\\data\\experiment_preflight.sqlite",
+    "hint_events_with_level": 1,
+    "hint_events_followed_by_submission": 1,
+    "by_level": {
+      "1": {
+        "n": 1,
+        "next_submission_pass_rate": 1.0,
+        "mean_gap_seconds": 0.0,
+        "mean_judge_ms": 96.0
+      }
+    },
+    "caveats": [
+      "gap_seconds 是提示结束到下次提交的间隔，不等于纯思考时间（含阅读、编辑、犹豫）。",
+      "model_request_ms 为该次提示请求整请求耗时（判题+模型），不是单独模型耗时。",
+      "judge_ms 取自 submission_log.elapsed_ms，是判题耗时，不可当学生作答时间。",
+      "预演数据由脚本模拟，仅证明口径可计算，不进入真实学习效果分析。"
+    ]
+  },
+  "rows": [
+    {
+      "participant": "DRYRUN-20261028-094020",
+      "question": "P001",
+      "hint_level": 1,
+      "hint_source": "llm",
+      "model_request_ms": 1000,
+      "next_submission": {
+        "status": "pass",
+        "passed": true,
+        "judge_ms": 96,
+        "gap_seconds": 0.0
+      }
+    }
+  ]
+}

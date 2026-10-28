@@ -1,0 +1,14 @@
+﻿id,ts,participant_id,group_id,question_id,phase,submit_seq,status,error_type,error_class,error_kp,hint_level,hint_unlocked_level,hint_requested,pass_status,elapsed_ms
+1,2026-10-28T09:40:20+08:00,DRYRUN-20261028-094020,exp,S001,pretest,1,pass,none,未分类,,0,0,0,1,240
+2,2026-10-28T09:40:21+08:00,DRYRUN-20261028-094020,exp,S002,pretest,1,pass,none,未分类,,0,0,0,1,240
+3,2026-10-28T09:40:21+08:00,DRYRUN-20261028-094020,exp,S003,pretest,1,pass,none,未分类,,0,0,0,1,241
+4,2026-10-28T09:40:21+08:00,DRYRUN-20261028-094020,exp,P001,practice,1,fail,wrong_output,逻辑,循环,0,0,0,0,96
+5,2026-10-28T09:40:22+08:00,DRYRUN-20261028-094020,exp,P001,practice,2,pass,none,未分类,,0,0,0,1,96
+6,2026-10-28T09:40:22+08:00,DRYRUN-20261028-094020,exp,P002,practice,1,pass,none,未分类,,0,0,0,1,96
+7,2026-10-28T09:40:22+08:00,DRYRUN-20261028-094020,exp,P003,practice,1,pass,none,未分类,,0,0,0,1,113
+8,2026-10-28T09:40:22+08:00,DRYRUN-20261028-094020,exp,P004,practice,1,pass,none,未分类,,0,0,0,1,96
+9,2026-10-28T09:40:22+08:00,DRYRUN-20261028-094020,exp,P005,practice,1,pass,none,未分类,,0,0,0,1,144
+10,2026-10-28T09:40:22+08:00,DRYRUN-20261028-094020,exp,P006,practice,1,pass,none,未分类,,0,0,0,1,80
+11,2026-10-28T09:40:23+08:00,DRYRUN-20261028-094020,exp,S004,posttest,1,pass,none,未分类,,0,0,0,1,241
+12,2026-10-28T09:40:23+08:00,DRYRUN-20261028-094020,exp,S005,posttest,1,pass,none,未分类,,0,0,0,1,241
+13,2026-10-28T09:40:23+08:00,DRYRUN-20261028-094020,exp,S006,posttest,1,pass,none,未分类,,0,0,0,1,240

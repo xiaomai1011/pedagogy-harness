@@ -1,0 +1,101 @@
+{
+  "db": "C:\\Users\\45181\\AppData\\Local\\Temp\\ph_mem_7_do8r5_.sqlite",
+  "steps": [
+    {
+      "name": "跨会话读取预防性提示（库内在读，不在内存）",
+      "MEM-A": "提醒一下：你此前反复出错的地方有 —— 逻辑类错误 2 次（知识点：循环）。动笔前先留意。",
+      "MEM-B": "",
+      "A_has_reminder": true,
+      "B_has_reminder": false
+    },
+    {
+      "name": "独立进程读取同一库",
+      "stdout": "[{\"participant_id\": \"MEM-A\", \"error_class\": \"逻辑\", \"knowledge_point\": \"循环\", \"count\": 2, \"last_seen_ts\": \"2026-10-28T10:03:51+08:00\"}]",
+      "stderr": ""
+    },
+    {
+      "name": "两次纯提示请求",
+      "before": {
+        "error_memory": 1,
+        "submission_log": 2,
+        "event_log": 4
+      },
+      "after": {
+        "error_memory": 1,
+        "submission_log": 2,
+        "event_log": 8
+      },
+      "error_memory_unchanged": true
+    }
+  ],
+  "memory": [
+    [
+      "MEM-A",
+      "循环",
+      2
+    ]
+  ],
+  "switches": [
+    {
+      "group": "exp",
+      "enabled": [
+        "tutor_persona",
+        "error_classifier",
+        "error_memory",
+        "hint_ladder"
+      ],
+      "error_class": "逻辑",
+      "knowledge_point": "循环",
+      "hint_level": 0,
+      "has_message": true,
+      "memory_delta": 1,
+      "event_delta": 2
+    },
+    {
+      "group": "ctrl",
+      "enabled": [],
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "hint_level": 0,
+      "has_message": true,
+      "memory_delta": 0,
+      "event_delta": 2
+    },
+    {
+      "group": "abl_hint",
+      "enabled": [
+        "hint_ladder"
+      ],
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "hint_level": 0,
+      "has_message": true,
+      "memory_delta": 0,
+      "event_delta": 2
+    },
+    {
+      "group": "abl_cls",
+      "enabled": [
+        "error_classifier"
+      ],
+      "error_class": "逻辑",
+      "knowledge_point": "循环",
+      "hint_level": 0,
+      "has_message": true,
+      "memory_delta": 0,
+      "event_delta": 2
+    },
+    {
+      "group": "abl_mem",
+      "enabled": [
+        "error_memory"
+      ],
+      "error_class": "未分类",
+      "knowledge_point": "",
+      "hint_level": 0,
+      "has_message": true,
+      "memory_delta": 0,
+      "event_delta": 2
+    }
+  ]
+}

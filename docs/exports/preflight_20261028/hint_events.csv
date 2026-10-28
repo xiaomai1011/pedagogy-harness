@@ -1,0 +1,4 @@
+﻿event_id,request_id,submission_id,participant_id,question_id,phase,entry,ts_start,ts_end,elapsed_ms,status,hint_level,unlocked_level,hint_source,reason_code
+7,b3626edb0e35421f8710d677ba80b2c7,,DRYRUN-20261028-094020,S001,pretest,hint,2026-10-28T09:40:21+08:00,2026-10-28T09:40:21+08:00,0,phase_disabled,,,,phase_disabled
+10,2bd8b57a1b804d21b276cd2290849bfd,,DRYRUN-20261028-094020,P001,practice,hint,2026-10-28T09:40:21+08:00,2026-10-28T09:40:22+08:00,1000,returned_model,1,1,llm,
+30,795d035a983449108cc1fff43156e30a,,DRYRUN-20261028-094020,S004,posttest,hint,2026-10-28T09:40:23+08:00,2026-10-28T09:40:23+08:00,0,phase_disabled,,,,phase_disabled

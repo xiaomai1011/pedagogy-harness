@@ -5,11 +5,12 @@
 
 import logging
 import os
+import threading
 import time
 import weakref
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -32,6 +33,21 @@ db.init_db()
 # 正式实验统一走 `exp`（契约 §5）。只有现场演示/联调才允许切预设：
 # 设环境变量 `PH_ALLOW_GROUP_SWITCH=1` 才放行 `group` 字段，否则一律按 exp 记。
 ALLOW_GROUP_SWITCH = os.environ.get("PH_ALLOW_GROUP_SWITCH") == "1"
+
+#: 单路执行闸门：实验为「单参与者、单次提交」，不允许两个请求同时判题/调模型。
+#: 非阻塞获取，占不到就立刻 429（不排队、不等待），避免把等待时间算进学生作答耗时。
+_SINGLE_LANE = threading.Lock()
+
+
+def _enter_single_lane() -> None:
+    if not _SINGLE_LANE.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "status": "busy",
+                "message": "上一次提交仍在执行，请稍候再试（本实验为单路执行，不排队）。",
+            },
+        )
 
 #: 拒判时给学生看的**固定文案**（不拼异常原文、不含学生代码、不伪装成 runtime error）
 ISOLATION_NOT_READY_MESSAGE = (
@@ -238,6 +254,7 @@ def _isolation_refusal(exc, *, hint_requested: bool) -> dict:
 def api_submit(req: SubmitRequest) -> dict:
     from app.harness import isolation
 
+    _enter_single_lane()
     try:
         return handle_submission(
             participant_id=req.participant_id,
@@ -248,6 +265,8 @@ def api_submit(req: SubmitRequest) -> dict:
         )
     except isolation.IsolationUnavailable as exc:
         return _isolation_refusal(exc, hint_requested=req.request_hint)
+    finally:
+        _SINGLE_LANE.release()
 
 
 @app.post("/api/hint")
@@ -259,6 +278,7 @@ def api_hint(req: HintRequest) -> dict:
     """
     from app.harness import isolation
 
+    _enter_single_lane()
     try:
         return handle_hint_request(
             participant_id=req.participant_id,
@@ -268,3 +288,5 @@ def api_hint(req: HintRequest) -> dict:
         )
     except isolation.IsolationUnavailable as exc:
         return _isolation_refusal(exc, hint_requested=True)
+    finally:
+        _SINGLE_LANE.release()

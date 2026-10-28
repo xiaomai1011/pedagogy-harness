@@ -163,3 +163,18 @@ def test_sanitize_proxy_env_drops_bracketed_entries(monkeypatch):
     value = os.environ.get("NO_PROXY", "")
     assert "[" not in value and "]" not in value, value
     assert "localhost" in value and "127.0.0.1" in value
+
+def test_sanitize_proxy_env_keeps_legitimate_entries(monkeypatch):
+    """只剔除带方括号的条目，其它代理配置逐字保留（不误删合法配置）。"""
+    monkeypatch.setenv("NO_PROXY", "10.0.0.5,*.internal,localhost,[::1]")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7897")
+    llm._sanitize_proxy_env()
+    assert os.environ["NO_PROXY"] == "10.0.0.5,*.internal,localhost"
+    assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:7897"
+
+
+def test_sanitize_proxy_env_tolerates_missing_variable(monkeypatch):
+    """未设置时什么都不做，也不抛异常。"""
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    llm._sanitize_proxy_env()
+    assert "NO_PROXY" not in os.environ or "[" not in os.environ["NO_PROXY"]

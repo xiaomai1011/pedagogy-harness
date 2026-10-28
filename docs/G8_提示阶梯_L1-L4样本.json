@@ -1,0 +1,100 @@
+{
+  "question_id": "P001",
+  "question_title": "最大值和它的第一次出现",
+  "participant_scope": "每个等级独立参与者（避免连败累积）",
+  "llm": "real",
+  "judge": "VM phcode agent",
+  "samples": [
+    {
+      "target_level": "L1",
+      "participant": "SAMPLE-L1",
+      "consecutive_fails_before": 0,
+      "last_submission": null,
+      "hint": {
+        "level": 1,
+        "unlocked_level": 1,
+        "source": "llm",
+        "chars": 70,
+        "latency_ms": 2337,
+        "text": "可以关注这些关键词和函数：`range`、`len`、`split`、`int`、`max`、`index`，以及记录当前位置的变量和循环。",
+        "model_elapsed_ms_event": 3000
+      },
+      "status": "fail",
+      "error_type": "wrong_output",
+      "knowledge_point": "循环"
+    },
+    {
+      "target_level": "L2",
+      "participant": "SAMPLE-L2",
+      "consecutive_fails_before": 4,
+      "last_submission": {
+        "code": "n = int(input())\nprint(n)",
+        "status": "fail",
+        "error_type": "wrong_output",
+        "knowledge_point": "循环"
+      },
+      "hint": {
+        "level": 2,
+        "unlocked_level": 2,
+        "source": "llm",
+        "chars": 235,
+        "latency_ms": 2180,
+        "text": "先读入两个输入：整数 n，以及紧随其后的 n 个整数序列。接着用一个循环从头到尾扫描这 n 个数，在扫描过程中持续维护两样信息：目前见过的最大值，以及这个最大值第一次出现的位置。遍历结束后，把这两样信息按要求输出。\n\n开始前建议对照你历史出错的地方重点想清楚两点：\n- 循环从哪个下标开始、到哪里结束，才能正好覆盖全部 n 个数，且与位置编号（从 1 开始）对应上。\n- 当遇到“和当前最大值相等”的数时，位置要不要更新？这直接决定输出的是第一次还是最后一次出现的位置。",
+        "model_elapsed_ms_event": 2000
+      },
+      "status": "fail",
+      "error_type": "wrong_output",
+      "knowledge_point": "循环"
+    },
+    {
+      "target_level": "L3",
+      "participant": "SAMPLE-L3",
+      "consecutive_fails_before": 6,
+      "last_submission": {
+        "code": "print(sum(int(x) for x in input().split()))",
+        "status": "fail",
+        "error_type": "wrong_output",
+        "knowledge_point": "循环"
+      },
+      "hint": {
+        "level": 3,
+        "unlocked_level": 3,
+        "source": "llm",
+        "chars": 374,
+        "latency_ms": 2629,
+        "text": "你的代码没有读取输入，也没有计算，所以输出是固定的错误结果。按下面步骤思考：\n\n1. 读入 n，再读入 n 个整数，存入一个列表（或其它能按下标访问的结构）。\n2. 准备两个变量：一个记录当前最大值，一个记录它第一次出现的下标（位置）。用第 1 个元素和位置 1 初始化它们。\n3. 从第 2 个元素开始逐个向后遍历，同时维护当前位置编号。\n4. 对每个元素，判断它是否严格大于当前最大值：\n   - 如果是，更新最大值为该元素，并把位置更新为当前编号；\n   - 如果不是（等于或小于），什么都不做。这一步是保证“第一次出现”的关键，注意判断要用严格大于，而不是大于等于。\n5. 遍历结束后，输出最大值和记录的位置，用空格分隔。\n\n检查重点：循环是否覆盖了所有 n 个元素；位置编号是否从 1 开始且与元素对应；遇到相等元素时不会覆盖已有的位置。",
+        "model_elapsed_ms_event": 3000
+      },
+      "status": "fail",
+      "error_type": "wrong_output",
+      "knowledge_point": "循环"
+    },
+    {
+      "target_level": "L4",
+      "participant": "SAMPLE-L4",
+      "consecutive_fails_before": 8,
+      "last_submission": {
+        "code": "print(' ')",
+        "status": "fail",
+        "error_type": "wrong_output",
+        "knowledge_point": "循环"
+      },
+      "hint": {
+        "level": 4,
+        "unlocked_level": 4,
+        "source": "llm",
+        "chars": 332,
+        "latency_ms": 2201,
+        "text": "你的代码直接输出了固定内容，没有读取输入，也没有计算过程。最大值和它的第一次出现位置无法预先写死。\n\n下一步该检查的是：如何把 n 个元素逐个“过一遍”。可以先用一个变量保存“目前见过的最大值”和它对应的位置，初始值取第 1 个元素及其位置 1；然后用循环从第 2 个位置开始遍历。\n\n局部片段示意（仅示意遍历结构）：\n\n```\nbest = a[1]\npos = 1\nfor i in range(2, n + 1):\n    # 在这里判断 a[i] 与 best 的关系\n    pass\n```\n\n关键判断点：只有在 `a[i] > best` 时才更新 `best` 和 `pos`。想一想为什么不能写 `>=`，以及这跟“第一次出现”的要求有什么关系。",
+        "model_elapsed_ms_event": 2000
+      },
+      "status": "fail",
+      "error_type": "wrong_output",
+      "knowledge_point": "循环"
+    }
+  ],
+  "reference_leak_in_hint": [],
+  "note": "latency_ms 为 /api/hint 整请求耗时（含判题）；模型耗时见 event_log.elapsed_ms",
+  "db": "C:\\Users\\45181\\AppData\\Local\\Temp\\ph_ladder_1i_ozy7q.sqlite",
+  "source_note": "提示正文由真实模型生成（event_log.hint_source='llm'；elapsed_ms 为秒级粗粒度，客户端测得整请求 2.1–2.6 秒）"
+}

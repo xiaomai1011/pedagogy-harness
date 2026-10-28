@@ -1,0 +1,4 @@
+﻿participant_id,phase,submissions,passed,first_submit_passed,hint_requested_submissions,avg_exec_ms,min_exec_ms,max_exec_ms,total_exec_ms,first_submit_ts,last_submit_ts
+DRYRUN-20261028-094020,posttest,3,3,3,0,240.7,240,241,722,2026-10-28T09:40:23+08:00,2026-10-28T09:40:23+08:00
+DRYRUN-20261028-094020,practice,7,6,5,0,103.0,80,144,721,2026-10-28T09:40:21+08:00,2026-10-28T09:40:22+08:00
+DRYRUN-20261028-094020,pretest,3,3,3,0,240.3,240,241,721,2026-10-28T09:40:20+08:00,2026-10-28T09:40:21+08:00

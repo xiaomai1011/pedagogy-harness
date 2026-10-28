@@ -1,0 +1,258 @@
+{
+  "summary": {
+    "total": 25,
+    "correct": 21,
+    "wrong": 4,
+    "unclassified": 0,
+    "accuracy": 0.84,
+    "denominator": "全部样例（含未分类）",
+    "rule_hits": 23,
+    "llm_fallbacks": 2,
+    "label_source": "团队标注（人工阅读代码与 traceback 判定），未经教师审核"
+  },
+  "mismatches": [
+    [
+      "类型",
+      "边界"
+    ],
+    [
+      "类型",
+      "边界"
+    ],
+    [
+      "未分类",
+      "环境"
+    ],
+    [
+      "未分类",
+      "逻辑"
+    ]
+  ],
+  "cases": [
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "print('hi'",
+      "stderr_tail": "SyntaxError: '(' was never closed",
+      "question": "P001"
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "if True\n    pass",
+      "stderr_tail": "SyntaxError: expected ':'",
+      "question": "P001"
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "def f():\npass",
+      "stderr_tail": "IndentationError: expected an indented block",
+      "question": "P001"
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "print(total)",
+      "stderr_tail": "NameError: name 'total' is not defined",
+      "question": "P001"
+    },
+    {
+      "human_label": "语法",
+      "predicted": "语法",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "def f():\n    print(x)\n    x = 1\nf()",
+      "stderr_tail": "UnboundLocalError: cannot access local variable 'x' where it is not associated with a value",
+      "question": "P001"
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "print('a' + 1)",
+      "stderr_tail": "TypeError: can only concatenate str (not \"int\") to str",
+      "question": "P001"
+    },
+    {
+      "human_label": "类型",
+      "predicted": "边界",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "print(int('abc'))",
+      "stderr_tail": "ValueError: invalid literal for int() with base 10: 'abc'",
+      "question": "P001"
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "xs = [1,2]\nprint(xs.size)",
+      "stderr_tail": "AttributeError: 'list' object has no attribute 'size'",
+      "question": "P001"
+    },
+    {
+      "human_label": "类型",
+      "predicted": "类型",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "print(len(5))",
+      "stderr_tail": "TypeError: object of type 'int' has no len()",
+      "question": "P001"
+    },
+    {
+      "human_label": "类型",
+      "predicted": "边界",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "print('{'.format(1))",
+      "stderr_tail": "ValueError: Single '{' encountered in format string",
+      "question": "P001"
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "source": "rule",
+      "knowledge_point": "列表",
+      "code": "xs=[1]\nprint(xs[3])",
+      "stderr_tail": "IndexError: list index out of range",
+      "question": "P001"
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "d={'a':1}\nprint(d['b'])",
+      "stderr_tail": "KeyError: 'b'",
+      "question": "P001"
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "source": "rule",
+      "knowledge_point": "取模",
+      "code": "print(10 % 0)",
+      "stderr_tail": "ZeroDivisionError: integer modulo by zero",
+      "question": "P004"
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "source": "rule",
+      "knowledge_point": "列表",
+      "code": "xs=[]\nprint(xs[0])",
+      "stderr_tail": "IndexError: list index out of range",
+      "question": "P001"
+    },
+    {
+      "human_label": "边界",
+      "predicted": "边界",
+      "source": "rule",
+      "knowledge_point": "列表",
+      "code": "n=int(input())\nprint([1,2][n])",
+      "stderr_tail": "IndexError: list index out of range",
+      "question": "P001"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "source": "rule",
+      "knowledge_point": "循环",
+      "code": "print('0 0')",
+      "stderr_tail": "",
+      "question": "P001"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "source": "rule",
+      "knowledge_point": "循环",
+      "code": "print(0)",
+      "stderr_tail": "",
+      "question": "P001"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "source": "rule",
+      "knowledge_point": "循环",
+      "code": "n=int(input())\nprint(n)",
+      "stderr_tail": "",
+      "question": "P003"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "source": "rule",
+      "knowledge_point": "循环",
+      "code": "print(' '.join(input().split()[::-1]))",
+      "stderr_tail": "",
+      "question": "P001"
+    },
+    {
+      "human_label": "逻辑",
+      "predicted": "逻辑",
+      "source": "rule",
+      "knowledge_point": "循环",
+      "code": "print(sum(int(x) for x in input().split()))",
+      "stderr_tail": "",
+      "question": "P003"
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "import numpy as np\nprint(np.zeros(3))",
+      "stderr_tail": "ModuleNotFoundError: No module named 'numpy'",
+      "question": "P001"
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "open('data.txt')",
+      "stderr_tail": "FileNotFoundError: [Errno 2] No such file or directory: 'data.txt'",
+      "question": "P001"
+    },
+    {
+      "human_label": "环境",
+      "predicted": "环境",
+      "source": "rule",
+      "knowledge_point": "",
+      "code": "def f(n):\n    return f(n+1)\nprint(f(0))",
+      "stderr_tail": "RecursionError: maximum recursion depth exceeded",
+      "question": "P001"
+    },
+    {
+      "human_label": "未分类",
+      "predicted": "环境",
+      "source": "llm",
+      "knowledge_point": "",
+      "code": "print('ok')",
+      "stderr_tail": "",
+      "question": "P001"
+    },
+    {
+      "human_label": "未分类",
+      "predicted": "逻辑",
+      "source": "llm",
+      "knowledge_point": "循环",
+      "code": "x = 1",
+      "stderr_tail": "",
+      "question": "P001"
+    }
+  ]
+}

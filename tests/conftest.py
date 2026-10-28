@@ -17,6 +17,15 @@ _TEST_DB = Path(tempfile.gettempdir()) / "pedagogy_harness_test.sqlite"
 _TEST_DB.unlink(missing_ok=True)          # 每次跑测试都从空库开始
 os.environ["PH_DB"] = str(_TEST_DB)
 
+# 代理环境规范化：本机 `NO_PROXY` 里带方括号的 IPv6 条目（`[::1]`）会让 httpx 在建连接池时
+# 抛 `httpx2.InvalidURL: Invalid port: ':1]'`。凡是不经过 `app.llm.llm()` 而**直接构造 SDK
+# 客户端**的用例（如 `test_sdk_interface_signature_check`）都会因此失败，且是否先导入业务模块
+# 会改变结果——这是测试顺序依赖。这里在导入任何业务模块前按**产品同样的规则**清理一次，
+# 让单条用例在新进程里也能独立跑通；断言本身保持原样（不跳过、不放宽）。
+from app import llm as _llm  # noqa: E402
+
+_llm._sanitize_proxy_env()
+
 from app.harness import isolation  # noqa: E402  —— 必须在 PH_DB 设好之后导入
 
 
