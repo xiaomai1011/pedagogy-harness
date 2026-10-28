@@ -56,3 +56,20 @@ def test_publish_filters_participant_question_list(admin_token):
                           _Req(), admin_token)
     # 全部下架 ≠ 恢复默认：表里仍有记录时列表为空，这是有意为之（避免"忘发题"时全量泄露）
     assert [q["id"] for q in main.api_questions(x_access_code=None)] == []
+
+
+def test_enrollment_roster_and_csv_export(admin_token):
+    """现场登记：编号表要带机器地址与提交/提示计数，并能导出 CSV。"""
+    from app import enroll
+
+    conn = enroll._connect()          # 确保 enrollment 表存在
+    conn.close()
+
+    rows = admin.enrollments_with_stats()
+    assert isinstance(rows, list)
+    for row in rows:
+        assert {"participant_id", "client_ip", "submissions", "passes", "hints"} <= set(row)
+
+    resp = admin.api_export("enrollments", _Req(), admin_token)
+    assert resp.media_type.startswith("text/csv")
+    assert "enrollments.csv" in resp.headers["content-disposition"]

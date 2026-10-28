@@ -72,7 +72,8 @@
 
   <section id="panel-devices" hidden>
     <div class="row">
-      <span class="muted">自动登记模式（PH_AUTO_ENROLL=1）下，学生第一次打开页面时由服务端分配编号并记住这台电脑；清 Cookie 或换浏览器会拿到新编号。</span>
+      <span class="muted">自动登记模式（PH_AUTO_ENROLL=1）下，学生第一次打开页面时由服务端分配编号并绑定这台机器：先认 Cookie，Cookie 丢失时按来源地址找回，同一台机器不会重复拿号。</span>
+      <button id="btn-roster" class="ghost">复制登记表</button>
     </div>
     <div class="wrap"><table id="t-dev"><thead></thead><tbody></tbody></table></div>
   </section>
@@ -120,6 +121,7 @@
       <button id="exp-sub">导出提交记录 CSV</button>
       <button id="exp-evt">导出事件日志 CSV</button>
       <button id="exp-board">导出看板 CSV</button>
+      <button id="exp-enr">导出电脑编号表 CSV</button>
     </div>
     <div class="hint">导出的是当前服务连接的数据库（见上方「数据库」卡片）。原始库文件请另行备份，不要靠删记录制造“干净库”。</div>
   </section>
@@ -194,7 +196,7 @@ async function refresh() {
   try {
     await loadSummary();
     if (state.tab === "board") await loadBoard();
-    if (state.tab === "devices") table($("t-dev"), await api("/api/admin/enrollments"));
+    if (state.tab === "devices") { state.devRows = await api("/api/admin/enrollments"); table($("t-dev"), state.devRows); }
     if (state.tab === "submissions") await loadSubs();
     if (state.tab === "events") await loadEvents();
     if (state.tab === "questions") await loadQuestions();
@@ -275,6 +277,22 @@ async function download(what, filename) {
 $("exp-sub").onclick = () => download("submissions", "submissions.csv");
 $("exp-evt").onclick = () => download("events", "events.csv");
 $("exp-board").onclick = () => download("board", "board.csv");
+$("exp-enr").onclick = () => download("enrollments", "enrollments.csv");
+
+$("btn-roster").onclick = async () => {
+  const rows = state.devRows || (state.devRows = await api("/api/admin/enrollments"));
+  const head = ["编号", "机器地址", "提交", "通过", "提示", "首次登记", "最近活动"];
+  const lines = [head.join("\t")].concat(rows.map((r) => [
+    r.participant_id, r.client_ip || "", r.submissions, r.passes, r.hints,
+    r.created_ts, r.last_seen_ts,
+  ].join("\t")));
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    $("conn").textContent = `已复制 ${rows.length} 行登记表`;
+  } catch (e) {
+    alert(lines.join("\n"));
+  }
+};
 
 try {
   const saved = sessionStorage.getItem("ph_admin_token");

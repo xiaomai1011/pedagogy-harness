@@ -180,6 +180,21 @@ def board() -> list[dict]:
     )
 
 
+def enrollments_with_stats() -> list[dict]:
+    """每台已登记机器：编号、来源地址、首次/最近、提交数、通过数、提示数。
+
+    现场登记表就靠这张表核对「哪台电脑是哪个编号」，导出后可留档。
+    """
+    return _rows(
+        "SELECT e.participant_id, e.client_ip, e.batch, e.created_ts, e.last_seen_ts, "
+        "  (SELECT COUNT(*) FROM submission_log s WHERE s.participant_id = e.participant_id) AS submissions, "
+        "  (SELECT COALESCE(SUM(pass_status), 0) FROM submission_log s WHERE s.participant_id = e.participant_id) AS passes, "
+        "  (SELECT COUNT(*) FROM event_log v WHERE v.participant_id = e.participant_id AND v.event_type = 'hint') AS hints, "
+        "  (SELECT MAX(s.ts) FROM submission_log s WHERE s.participant_id = e.participant_id) AS last_submission_ts "
+        "FROM enrollment e ORDER BY e.participant_id"
+    )
+
+
 def events(participant_id: str = "", limit: int = 200) -> list[dict]:
     params: list = []
     clause = ""
@@ -216,6 +231,8 @@ EVENT_CSV_FIELDS = ["event_id", "event_type", "request_id", "participant_id", "q
                     "entry", "ts_start", "elapsed_ms", "model_ms", "status", "progress", "hint_level",
                     "hint_source", "judge_status", "reason_code"]
 BOARD_CSV_FIELDS = ["participant_id", "question_id", "attempts", "passes", "max_hint", "last_ts"]
+ENROLLMENT_CSV_FIELDS = ["participant_id", "client_ip", "batch", "created_ts", "last_seen_ts",
+                         "submissions", "passes", "hints", "last_submission_ts"]
 
 
 def _csv_response(rows: list[dict], filename: str, fieldnames: list[str]) -> StreamingResponse:
@@ -311,10 +328,9 @@ def api_access_code(req: CodeRequest, request: Request,
 
 @router.get("/enrollments")
 def api_enrollments(request: Request, x_admin_token: str = Header(default=None)) -> list[dict]:
-    """自动登记过的电脑与被分配的编号（只在 PH_AUTO_ENROLL=1 时有意义）。"""
+    """自动登记过的电脑：编号、来源地址、提交/通过/提示计数（现场登记对账用）。"""
     require_admin(request, x_admin_token)
-    from app import enroll
-    return enroll.list_enrollments()
+    return enrollments_with_stats()
 
 
 @router.get("/export/{what}.csv")
@@ -326,4 +342,6 @@ def api_export(what: str, request: Request, x_admin_token: str = Header(default=
         return _csv_response(events(limit=1000), "events.csv", EVENT_CSV_FIELDS)
     if what == "board":
         return _csv_response(board(), "board.csv", BOARD_CSV_FIELDS)
+    if what == "enrollments":
+        return _csv_response(enrollments_with_stats(), "enrollments.csv", ENROLLMENT_CSV_FIELDS)
     raise HTTPException(status_code=404, detail={"status": "unknown_export"})
