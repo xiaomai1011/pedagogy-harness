@@ -61,9 +61,11 @@ def test_prepost_only_pairs_sessions_with_both_sides():
     by_id = {row["participant_id"]: row for row in rows}
 
     assert set(by_id) == {"A001", "A002"}
-    assert by_id["A001"]["delta_passed"] == 0
-    assert by_id["A002"]["delta_passed"] == 1
-    assert by_id["A002"]["delta_rate"] == 1.0
+    assert by_id["A001"]["delta_score"] == 0
+    assert by_id["A001"]["pretest_score"] == 1 and by_id["A001"]["pretest_planned"] == 2
+    assert by_id["A002"]["delta_score"] == 1
+    assert by_id["A002"]["delta_rate"] == 0.5  # 分母固定为后测题数 2，不是“尝试题数”
+    assert by_id["A002"]["pretest_complete"] is False  # 只做了 1/2 题
     assert summary["sessions_with_both"] == 2
     assert summary["sessions_pre_only"] == 1
     assert summary["sessions_post_only"] == 1

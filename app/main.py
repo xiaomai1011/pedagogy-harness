@@ -19,6 +19,7 @@ from app import access
 from app import admin
 from app import db
 from app import enroll
+from app import flow
 from app import llm as _llm
 from app.harness import builtin  # noqa: F401  —— 导入即注册内置组件
 from app.harness import registry
@@ -30,7 +31,7 @@ from app.questions import list_questions, load_question
 
 app = FastAPI(title="pedagogy-harness")
 app.include_router(admin.router)
-APP_VERSION = "0.5.2-enroll"
+APP_VERSION = "0.5.3-flow"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 VENDOR_DIR = WEB_DIR / "vendor"
 
@@ -260,20 +261,42 @@ def _require_phase_allowed(question_id: str, claims: access.Claims | None) -> No
         })
 
 
+def _require_flow_phase(question_id: str, participant_id: str) -> None:
+    """匿名会话模式：只能提交**当前阶段**的题目（顺序锁定，不能靠前端隐藏）。"""
+    if not enroll.enabled() or not participant_id:
+        return
+    question = load_question(question_id)
+    phase = (question or {}).get("phase", "practice")
+    now = flow.current(participant_id, enroll._batch())
+    if now != phase:
+        raise HTTPException(status_code=403, detail={
+            "status": "phase_locked", "phase": now, "question_phase": phase,
+            "message": f"当前阶段是「{flow.LABELS.get(now, now)}」，只能做本阶段题目；"
+                       "上一阶段的成绩已锁定，不能返回修改。",
+        })
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return (WEB_DIR / "index.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/me")
-def api_me(x_access_code: str = Header(default=None)) -> dict:
-    """身份自证：带有效访问码时返回**服务端认可**的参与者编号与批次。
+def api_me(request: Request = None, x_access_code: str = Header(default=None)) -> dict:
+    """身份自证：带有效访问码时返回**服务端认可**的参与者编号、批次与当前阶段。
 
-    页面用它把编号显示成只读，学生不需要自己填写；
+    自动登记模式下（无访问码）返回本机 Cookie 对应的编号与阶段，页面据此显示流程位置；
     未启用访问码时返回 `access_required=false`，由自动登记或手填编号处理。
     """
     if not access.access_required():
-        return {"access_required": False}
+        out = {"access_required": False}
+        if request is not None and enroll.enabled():
+            pid = enroll.resolve(request)
+            if pid:
+                out.update({"participant_id": pid, "batch": enroll._batch(),
+                            "phase": flow.current(pid, enroll._batch()),
+                            "phase_label": flow.LABELS.get(flow.current(pid, enroll._batch()), "")})
+        return out
     claims = _claims(x_access_code)          # 缺失/伪造/过期/批次不符都在这里 403
     if claims is None:
         raise HTTPException(status_code=403, detail={
@@ -288,12 +311,20 @@ def api_me(x_access_code: str = Header(default=None)) -> dict:
 
 
 @app.get("/api/questions")
-def api_questions(x_access_code: str = Header(default=None)) -> list[dict]:
-    """题目列表：带有效访问码时**只返回该批次允许的阶段**（服务端约束，不靠客户端传 phase）。"""
+def api_questions(request: Request = None, x_access_code: str = Header(default=None)) -> list[dict]:
+    """题目列表：带有效访问码时**只返回该批次允许的阶段**（服务端约束，不靠客户端传 phase）。
+
+    自动登记模式（匿名会话）下只返回**当前阶段**的题目：前测→练习→后测的顺序由服务端锁定。
+    """
     claims = _claims(x_access_code)
     items = list_questions()
     if claims is not None:
         items = [q for q in items if claims.allows_phase(q.get("phase", ""))]
+    if request is not None and enroll.enabled():
+        pid = enroll.resolve(request)
+        if pid:
+            now = flow.current(pid, enroll._batch())
+            items = [q for q in items if q.get("phase") == now]
     # 负责人在管理台"发题"后，学生只看到已发布的题目；发布表从未用过时按阶段全可见（本地联调）。
     published = admin.published_ids()
     if published is not None:
@@ -350,12 +381,17 @@ def api_status() -> dict:
 
 
 @app.get("/api/questions/{question_id}")
-def api_question(question_id: str, x_access_code: str = Header(default=None)) -> dict:
+def api_question(question_id: str, request: Request = None,
+                 x_access_code: str = Header(default=None)) -> dict:
     q = load_question(question_id)
     claims = _claims(x_access_code)
     if claims is not None:
         _require_phase_allowed(question_id, claims)
     _require_published(question_id)
+    if request is not None and enroll.enabled():
+        pid = enroll.resolve(request)
+        if pid:
+            _require_flow_phase(question_id, pid)
     # 不下发参考解与评测用例：题面示例走 examples，用例一律提交后才在判题结果里体现
     q.pop("reference_solution", None)
     q.pop("test_cases", None)
@@ -422,6 +458,21 @@ def api_enroll(request: Request, response: Response) -> dict:
     return enroll.enroll(request, response)
 
 
+@app.post("/api/phase/advance")
+def api_phase_advance(request: Request) -> dict:
+    """结束当前阶段（可保留未通过与未完成题目），进入下一阶段；上一阶段随即锁定。"""
+    if not enroll.enabled():
+        raise HTTPException(status_code=404, detail={"status": "flow_disabled",
+                                                     "message": "本服务未启用分阶段流程"})
+    pid = enroll.resolve(request)
+    if not pid:
+        raise HTTPException(status_code=403, detail={
+            "status": "session_required", "code": "session_missing",
+            "message": "页面会话尚未建立，请刷新页面后重试。",
+        })
+    return flow.advance(pid, enroll._batch())
+
+
 @app.post("/api/submit")
 def api_submit(req: SubmitRequest, request: Request = None,
                x_access_code: str | None = Header(default=None, alias=access.HEADER_NAME)) -> dict:
@@ -431,6 +482,7 @@ def api_submit(req: SubmitRequest, request: Request = None,
     participant_id = _participant_of(req.participant_id, claims, request)
     _require_phase_allowed(req.question_id, claims)
     _require_published(req.question_id)
+    _require_flow_phase(req.question_id, participant_id)
     if req.request_hint:
         _require_model_ready()
     _enter_single_lane()
@@ -467,6 +519,7 @@ def api_hint(req: HintRequest, request: Request = None,
     participant_id = _participant_of(req.participant_id, claims, request)
     _require_phase_allowed(req.question_id, claims)
     _require_published(req.question_id)
+    _require_flow_phase(req.question_id, participant_id)
     _require_model_ready()
     _enter_single_lane()
     try:

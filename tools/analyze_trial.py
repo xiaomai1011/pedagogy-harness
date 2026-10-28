@@ -207,25 +207,28 @@ def prepost_stats(subs: list[dict], plan) -> tuple[list[dict], dict]:
         pre, post = data["pre"], data["post"]
         if not pre or not post:
             continue
-        pre_pass = len([1 for v in pre.values() if v["any"]])
-        post_pass = len([1 for v in post.values() if v["any"]])
+        pre_score = len([1 for v in pre.values() if v["any"]])
+        post_score = len([1 for v in post.values() if v["any"]])
+        # 分母固定为该阶段的题数：少做或不做的题按“未通过”计，避免“做得少反而比例高”
         rows.append({
             "participant_id": pid,
-            "pretest_attempted": len(pre), "pretest_passed": pre_pass,
-            "pretest_rate": round(pre_pass / len(pre), 3),
-            "posttest_attempted": len(post), "posttest_passed": post_pass,
-            "posttest_rate": round(post_pass / len(post), 3),
-            "delta_passed": post_pass - pre_pass,
-            "delta_rate": round(post_pass / len(post) - pre_pass / len(pre), 3),
+            "pretest_attempted": len(pre), "pretest_planned": len(pre_qs), "pretest_score": pre_score,
+            "posttest_attempted": len(post), "posttest_planned": len(post_qs), "posttest_score": post_score,
+            "delta_score": post_score - pre_score,
+            "delta_rate": round((post_score - pre_score) / len(post_qs), 3) if post_qs else 0,
+            "pretest_complete": len(pre) >= len(pre_qs),
+            "posttest_complete": len(post) >= len(post_qs),
         })
 
     summary = {
         "sessions_with_both": len(rows),
         "sessions_pre_only": len([1 for d in seen.values() if d["pre"] and not d["post"]]),
         "sessions_post_only": len([1 for d in seen.values() if d["post"] and not d["pre"]]),
-        "improved": len([1 for r in rows if r["delta_passed"] > 0]),
-        "unchanged": len([1 for r in rows if r["delta_passed"] == 0]),
-        "worse": len([1 for r in rows if r["delta_passed"] < 0]),
+        "improved": len([1 for r in rows if r["delta_score"] > 0]),
+        "unchanged": len([1 for r in rows if r["delta_score"] == 0]),
+        "worse": len([1 for r in rows if r["delta_score"] < 0]),
+        "pretest_fully_attempted": len([1 for r in rows if r["pretest_complete"]]),
+        "posttest_fully_attempted": len([1 for r in rows if r["posttest_complete"]]),
     }
     if rows:
         summary["mean_delta_rate"] = round(statistics.mean(r["delta_rate"] for r in rows), 3)
@@ -299,8 +302,9 @@ def main(argv=None) -> int:
         writer.writerows(qrows)
 
     p_csv = export_dir / "trial_prepost.csv"
-    p_fields = ["participant_id", "pretest_attempted", "pretest_passed", "pretest_rate",
-                "posttest_attempted", "posttest_passed", "posttest_rate", "delta_passed", "delta_rate"]
+    p_fields = ["participant_id", "pretest_attempted", "pretest_planned", "pretest_score",
+                "posttest_attempted", "posttest_planned", "posttest_score",
+                "delta_score", "delta_rate", "pretest_complete", "posttest_complete"]
     with p_csv.open("w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=p_fields, extrasaction="ignore")
         writer.writeheader()
@@ -327,12 +331,14 @@ def main(argv=None) -> int:
                 f"- 同时做了前后测的会话：**{psum['sessions_with_both']}**；只做前测 {psum['sessions_pre_only']}，"
                 f"只做后测 {psum['sessions_post_only']}（不进入对比）。"]
         if prows:
-            out.append(f"- 至少通过一次（按题计）变化：提升 {psum['improved']}、不变 {psum['unchanged']}、"
+            out.append(f"- 至少通过一次（按题计，分母固定为该阶段题数）变化：提升 {psum['improved']}、不变 {psum['unchanged']}、"
                        f"下降 {psum['worse']}；平均变化率 {psum['mean_delta_rate']:+.0%}，中位 {psum['median_delta_rate']:+.0%}。")
-            out += ["", "| 会话 | 前测通过/尝试 | 后测通过/尝试 | 变化(题) | 变化率 |", "|---|---|---|---|---|"]
+            out.append(f"- 前测题全部提交过：{psum['pretest_fully_attempted']}/{psum['sessions_with_both']}；"
+                       f"后测题全部提交过：{psum['posttest_fully_attempted']}/{psum['sessions_with_both']}（未提交按未通过计）。")
+            out += ["", "| 会话 | 前测得分 | 后测得分 | 变化(分) | 变化率 |", "|---|---|---|---|---|"]
             for r in prows:
-                out.append(f"| {r['participant_id']} | {r['pretest_passed']}/{r['pretest_attempted']} "
-                           f"| {r['posttest_passed']}/{r['posttest_attempted']} | {r['delta_passed']:+d} "
+                out.append(f"| {r['participant_id']} | {r['pretest_score']}/{r['pretest_planned']} "
+                           f"| {r['posttest_score']}/{r['posttest_planned']} | {r['delta_score']:+d} "
                            f"| {r['delta_rate']:+.0%} |")
         else:
             out.append("- 目前没有哪个会话同时提交过前测与后测，暂无可比对的配对数据。")

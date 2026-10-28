@@ -182,6 +182,7 @@
     <label class="muted">实验访问码 <input class="pid" id="access" placeholder="负责人发放（粘贴整串）" /><span class="muted" id="access-len" style="font-size:12px;margin-left:6px"></span></label>
     <span class="notice idle" id="op-state">服务就绪</span>
     <span class="notice idle" id="id-state" title="这里只反映身份校验状态：未验证＝尚未用访问码提交过任何请求">身份：未验证</span>
+    <span class="notice idle" id="phase-state" title="前测 → 练习 → 后测，顺序由服务端锁定；时间地点自行安排">阶段：—</span>
     <span class="muted" id="privacy-note" style="font-size:12px" title="本页面会记录代码提交、提示使用与判题结果，用于本次教学研究与改进；不收集姓名。匿名会话编号保存在本机浏览器中。">· 本页记录代码与提示使用（不含姓名）</span>
     <span class="spacer"></span>
     <!-- 组件徽标属**开发调试信息**：学生模式下默认收起，见「调试」开关 -->
@@ -218,6 +219,8 @@
       <button class="btn primary" id="btn-submit" disabled>提交代码</button>
       <button class="btn" id="btn-hint" disabled>请求提示</button>
       <button class="btn" id="btn-rehint" disabled>重看提示</button>
+      <button class="btn" id="btn-finish" style="display:none"
+        title="结束当前阶段后进入下一阶段；未通过、未完成的题目会如实保留，不能返回修改">结束本阶段</button>
       <div class="sep"></div>
       <span class="notice idle" id="op-msg">选择题目后可提交</span>
       <!-- 等级信息只在①这里与②AI 区标题两处出现；机制解释收进 ⓘ 帮助 -->
@@ -268,9 +271,10 @@
     isolationNote: "",      // 未就绪时服务端给出的说明
     lastHintRequestId: "",  // 上一次成功提示的请求号（「重看提示」复用它）
     hintRequested: false,   // 本题是否已经请求过提示（决定按钮文案）
+    phase: "",              // 当前阶段（服务端 /api/me 给出）
     busy: false
   };
-  const PHASE_LABEL = { pretest: "前测", practice: "练习", posttest: "后测" };
+  const PHASE_LABEL = { pretest: "前测", practice: "练习", posttest: "后测", done: "已完成" };
   const PHASE_NOTE = {
     pretest: "当前为前测阶段：本阶段不提供 AI 学习提示（你的提交仍会正常记录）。",
     posttest: "当前为后测阶段：本阶段不提供 AI 学习提示（你的提交仍会正常记录）。"
@@ -400,7 +404,7 @@
   }
   function phaseAllowsTeaching() { return !!state.question && state.question.phase === "practice"; }
   function refreshButtons() {
-    const ready = state.editorReady && !state.busy;
+    const ready = state.editorReady && !state.busy && state.phase !== "done";
     $("btn-submit").disabled = !ready;
     $("btn-hint").disabled = !ready || !phaseAllowsTeaching();  // 前后测：禁用而非隐藏
     $("btn-rehint").disabled = !ready || !state.lastHintRequestId || !phaseAllowsTeaching();
@@ -834,6 +838,52 @@
     return code ? { "X-Access-Code": code } : {};
   }
 
+  // ---------- 阶段流程（前测 → 练习 → 后测，服务端锁定）----------
+  function renderPhase(d) {
+    const ph = (d && d.phase) || "";
+    state.phase = ph;
+    const el = $("phase-state");
+    if (el) {
+      el.textContent = "阶段：" + (ph ? (PHASE_LABEL[ph] || ph) : "—");
+      el.className = "notice " + (ph === "done" ? "ok" : "idle");
+    }
+    const fin = $("btn-finish");
+    if (fin) fin.style.display = ph && ph !== "done" ? "" : "none";
+    if (ph === "done") {
+      $("btn-submit").disabled = true;
+      $("btn-hint").disabled = true;
+      $("btn-rehint").disabled = true;
+      notify("ok", "三个阶段都已完成，感谢参与！", "op-msg");
+    }
+  }
+  async function refreshPhase() {
+    try {
+      const r = await fetch("/api/me", { headers: accessHeaders() });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.phase) renderPhase(d);
+    } catch (e) { /* 忽略：阶段显示失败不影响做题 */ }
+  }
+  async function finishPhase() {
+    if (!confirm("结束本阶段？结束后进入下一阶段；本阶段未通过、未完成的题目会如实保留，不能返回修改。")) return;
+    try {
+      const r = await fetch("/api/phase/advance", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        notify("bad", (d.detail && d.detail.message) || "无法结束阶段，请刷新后重试", "op-msg");
+        return;
+      }
+      renderPhase(d);
+      state.question = null;
+      state.hintRequested = false;
+      state.lastHintRequestId = null;
+      $("qdetail").innerHTML = "";
+      await loadQuestionList();
+      notify("ok", "已进入" + (d.label || "下一阶段"), "op-msg");
+    } catch (e) {
+      notify("bad", "网络错误，请重试", "op-msg");
+    }
+  }
+
   // 访问码模式：编号不由学生填写，服务端按码解析后回填为只读
   let _idTimer = null;
   async function syncIdentity() {
@@ -884,6 +934,7 @@
   $("btn-submit").onclick = submit;
   $("btn-hint").onclick = () => requestHint(false);
   $("btn-rehint").onclick = () => requestHint(true);
+  $("btn-finish").onclick = finishPhase;
   $("btn-debug").onclick = () => { state.debug = !state.debug; applyDebug(); };
   $("pid").oninput = () => { $("st-pid").textContent = $("pid").value || "（未填编号）"; };
 
@@ -895,6 +946,7 @@
   loadComponents();
   ensureEnrollment();
   syncIdentity();
+  refreshPhase();
   loadQuestionList();
 </script>
 </body>
