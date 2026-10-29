@@ -37,3 +37,9 @@ Thumbs.db
 # 临时文件
 *.tmp
 *.log
+
+# 导出与本地备份（可能含参与者数据）
+docs/exports/
+data/backups/
+port.txt
+.pytest_cache/
