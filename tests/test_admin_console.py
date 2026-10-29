@@ -58,6 +58,16 @@ def test_publish_filters_participant_question_list(admin_token):
     assert [q["id"] for q in main.api_questions(x_access_code=None)] == []
 
 
+def test_published_order_controls_question_list(admin_token):
+    """管理台设定的顺序要影响 /api/questions 的返回顺序（同一阶段内）。"""
+    admin.set_published(["P005", "P004"], True)
+    admin.set_order(["P005", "P004"])
+
+    ids = [q["id"] for q in main.api_questions(x_access_code=None)]
+    assert "P005" in ids and "P004" in ids
+    assert ids.index("P005") < ids.index("P004")
+
+
 def test_enrollment_roster_and_csv_export(admin_token):
     """现场登记：编号表要带机器地址与提交/提示计数，并能导出 CSV。"""
     from app import enroll

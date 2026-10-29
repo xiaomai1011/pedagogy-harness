@@ -31,7 +31,7 @@ from app.questions import list_questions, load_question
 
 app = FastAPI(title="pedagogy-harness")
 app.include_router(admin.router)
-APP_VERSION = "0.5.3-flow"
+APP_VERSION = "0.5.4-order"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 VENDOR_DIR = WEB_DIR / "vendor"
 
@@ -329,6 +329,10 @@ def api_questions(request: Request = None, x_access_code: str = Header(default=N
     published = admin.published_ids()
     if published is not None:
         items = [q for q in items if q["id"] in published]
+    # 顺序：阶段（前测→练习→后测）→ 管理台设定的 sort_order → 题号
+    order = admin.publish_order()
+    rank = {"pretest": 0, "practice": 1, "posttest": 2}
+    items.sort(key=lambda q: (rank.get(q.get("phase"), 9), order.get(q["id"], 0) or 0, q["id"]))
     return [{"id": q["id"], "title": q["title"], "difficulty": q.get("difficulty"),
              "phase": q.get("phase")}
             for q in items]

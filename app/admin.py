@@ -31,6 +31,7 @@ PUBLISH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS question_publish (
     question_id TEXT PRIMARY KEY,
     published   INTEGER NOT NULL DEFAULT 1,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
     updated_ts  TEXT NOT NULL
 );
 """
@@ -43,8 +44,37 @@ def _now() -> str:
 def _connect() -> sqlite3.Connection:
     conn = db.connect()
     conn.execute(PUBLISH_SCHEMA)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(question_publish)").fetchall()}
+    if "sort_order" not in cols:
+        conn.execute("ALTER TABLE question_publish ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     return conn
+
+
+def publish_order() -> dict[str, int]:
+    """题目的展示顺序（`sort_order`，0 表示未指定，按 id 兜底）。"""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT question_id, sort_order FROM question_publish WHERE published = 1").fetchall()
+        return {r[0]: int(r[1] or 0) for r in rows}
+    finally:
+        conn.close()
+
+
+def set_order(question_ids: list[str]) -> int:
+    """按给定顺序写入 1..n（已发布的题才参与排序）。"""
+    conn = _connect()
+    try:
+        for idx, qid in enumerate(question_ids, start=1):
+            conn.execute(
+                "INSERT INTO question_publish(question_id, published, sort_order, updated_ts) VALUES(?,1,?,?) "
+                "ON CONFLICT(question_id) DO UPDATE SET sort_order=excluded.sort_order, updated_ts=excluded.updated_ts",
+                (qid, idx, _now()),
+            )
+        conn.commit()
+        return len(question_ids)
+    finally:
+        conn.close()
 
 
 def _token_path() -> Path | None:
