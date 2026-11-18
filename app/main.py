@@ -29,7 +29,7 @@ from app.harness import isolation
 from app.harness.vm_agent_adapter import VmAgentAdapter, register_vm_agent_adapter
 from app.questions import list_questions, load_question
 
-app = FastAPI(title="pedagogy-harness")
+app = FastAPI(title="面向编程初学者的可插拔教学法练习助手的设计与实现")
 app.include_router(admin.router)
 APP_VERSION = "0.5.4-order"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
