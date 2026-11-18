@@ -5,7 +5,14 @@
 
 | 组件 / 来源 | 版本 / 链接 | 许可证 | 用途 | 是否与创新点相关 |
 |---|---|---|---|---|
-| Monaco Editor（Microsoft） | `0.57.0` · https://github.com/microsoft/vscode | **MIT** | 前端代码编辑器（学生答题区）。已**本地化**到 `web/vendor/monaco/`，**离线可用、不依赖 CDN** | ❌ 否（纯编辑器基座，非创新点） |
+| Monaco Editor（Microsoft） | `0.57.0` · https://github.com/microsoft/monaco-editor | **MIT** | 本地网页代码编辑器，许可证随包保存于 `web/vendor/monaco/LICENSE` | 否 |
+| FastAPI | https://github.com/fastapi/fastapi | MIT | Web API 服务框架 | 否 |
+| Uvicorn | https://github.com/encode/uvicorn | BSD-3-Clause | ASGI 服务进程 | 否 |
+| python-dotenv | https://github.com/theskumar/python-dotenv | BSD-3-Clause | 读取本地环境配置 | 否 |
+| OpenAI Python SDK | https://github.com/openai/openai-python | Apache-2.0 | 调用兼容模型接口 | 否 |
+| pytest | https://github.com/pytest-dev/pytest | MIT | 自动化测试 | 否 |
+
+依赖版本范围见 `requirements.txt`，这里不是锁定环境的完整依赖清单。安装时产生的传递依赖按各自许可证处理。SDK的许可不代表模型、模型输出或服务可按同一许可使用；模型服务由部署者自行配置。
 
 > **说明（2026-10-17）**：前端编辑器由 CodeMirror（CDN 版，已移除）更换为**本地化 Monaco**。
 > 只启用 **python 语法着色**（`basic-languages`），**未接入**任何语言服务/自动补全
